@@ -21,8 +21,10 @@ import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.ArrayAdapter
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.RadioButton
@@ -69,6 +71,7 @@ private const val USER_AGENT = "MockWalker/${BuildConfig.VERSION_NAME} (Android)
 
 private val WALK_COLOR = Color.rgb(229, 57, 53) // the walker and whatever it is walking
 private val LANDMARK_COLOR = Color.rgb(142, 36, 170)
+private val FAVORITE_COLOR = Color.rgb(239, 108, 0)
 
 class MainActivity : AppCompatActivity() {
 
@@ -614,7 +617,7 @@ class MainActivity : AppCompatActivity() {
         landmarkMarkers.clear()
         val insertAt = b.map.overlays.indexOf(centerMarker) // above lines, below waypoints and walker
         landmarks.forEach { l ->
-            val (icon, anchorY) = landmarkIcon(l.name)
+            val (icon, anchorY) = landmarkIcon(l.name, l.favorite)
             val m = Marker(b.map).apply {
                 position = GeoPoint(l.lat, l.lon)
                 this.icon = icon
@@ -628,10 +631,14 @@ class MainActivity : AppCompatActivity() {
         updateHeader()
     }
 
-    /** Purple star badge with the name underneath; returns the icon and the badge center as anchor. */
-    private fun landmarkIcon(name: String): Pair<BitmapDrawable, Float> {
+    /**
+     * Star badge with the name underneath, purple or orange for favorites (drawn larger);
+     * returns the icon and the badge center as anchor.
+     */
+    private fun landmarkIcon(name: String, favorite: Boolean): Pair<BitmapDrawable, Float> {
+        val badge = if (favorite) FAVORITE_COLOR else LANDMARK_COLOR
         val d = resources.displayMetrics.density
-        val r = 12 * d
+        val r = (if (favorite) 14 else 12) * d
         val label = if (name.length > 20) name.take(19) + "…" else name
         val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             textSize = 13 * d
@@ -649,7 +656,7 @@ class MainActivity : AppCompatActivity() {
         val fill = Paint(Paint.ANTI_ALIAS_FLAG)
         fill.color = Color.WHITE
         c.drawCircle(cx, cy, r + 2 * d, fill)
-        fill.color = LANDMARK_COLOR
+        fill.color = badge
         c.drawCircle(cx, cy, r, fill)
         val star = Paint(text).apply { color = Color.WHITE; textSize = 15 * d }
         c.drawText("★", cx, cy - (star.ascent() + star.descent()) / 2, star)
@@ -659,7 +666,7 @@ class MainActivity : AppCompatActivity() {
         text.color = Color.WHITE
         c.drawText(label, cx, baseline, text)
         text.style = Paint.Style.FILL
-        text.color = LANDMARK_COLOR
+        text.color = badge
         c.drawText(label, cx, baseline, text)
         return BitmapDrawable(resources, bmp) to cy / bmp.height
     }
@@ -677,49 +684,159 @@ class MainActivity : AppCompatActivity() {
 
     private fun addLandmark(p: GeoPoint, suggested: String?) {
         promptName("New landmark", suggested ?: "Landmark ${landmarks.size + 1}") { name ->
-            store.upsertLandmark(SavedLandmark(name, p.latitude, p.longitude))
+            val favorite = landmarks.any { it.name == name && it.favorite } // re-adding keeps the star
+            store.upsertLandmark(SavedLandmark(name, p.latitude, p.longitude, favorite))
             reloadLandmarks()
             toast("Added \"$name\"")
         }
     }
 
+    private fun setFavorite(names: Set<String>, favorite: Boolean) {
+        store.saveLandmarks(store.landmarks().map { if (it.name in names) it.copy(favorite = favorite) else it })
+        reloadLandmarks()
+    }
+
+    private fun deleteLandmarks(names: Set<String>) {
+        store.saveLandmarks(store.landmarks().filterNot { it.name in names })
+        reloadLandmarks()
+    }
+
     private fun showLandmark(l: SavedLandmark) {
         val gp = GeoPoint(l.lat, l.lon)
-        val dlg = MaterialAlertDialogBuilder(this)
-            .setTitle(l.name)
-            .setMessage(String.format(Locale.US, "%.6f, %.6f", l.lat, l.lon))
-            .setNeutralButton("Delete") { _, _ ->
-                store.saveLandmarks(store.landmarks().filterNot { it.name == l.name })
-                reloadLandmarks()
-            }
-            .setNegativeButton("Close", null)
+        val actions = mutableListOf<Pair<String, () -> Unit>>()
         when (mode) {
-            Mode.CIRCLE -> dlg.setPositiveButton("Set as center") { _, _ -> selectCenter(gp) }
-            Mode.ROUTE -> dlg.setPositiveButton("Add waypoint") { _, _ ->
+            Mode.CIRCLE -> actions.add("Set as center" to { selectCenter(gp) })
+            Mode.ROUTE -> actions.add("Add waypoint" to {
                 waypoints.add(gp)
                 refreshAll()
-            }
+            })
             Mode.LANDMARK -> {}
+        }
+        actions.add(
+            if (l.favorite) "Remove from favorites" to { setFavorite(setOf(l.name), false) }
+            else "Add to favorites" to { setFavorite(setOf(l.name), true) }
+        )
+        actions.add("Delete" to { deleteLandmarks(setOf(l.name)) })
+        MaterialAlertDialogBuilder(this)
+            .setTitle((if (l.favorite) "★ " else "") + l.name)
+            .setItems(actions.map { it.first }.toTypedArray()) { _, i -> actions[i].second() }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    /** All or favorite landmarks: tap a name to jump there, star to toggle favorite, check to delete. */
+    private fun showLandmarks() {
+        var favoritesOnly = false
+        val selected = mutableSetOf<String>()
+        val shown = mutableListOf<SavedLandmark>()
+        var dlg: AlertDialog? = null
+
+        val empty = TextView(this).apply { setPadding(dp(24), dp(16), dp(24), dp(16)) }
+        val list = ListView(this)
+        val adapter = object : ArrayAdapter<SavedLandmark>(this, R.layout.item_landmark, shown) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val v = convertView ?: layoutInflater.inflate(R.layout.item_landmark, parent, false)
+                val l = shown[position]
+                val rows = this
+                v.findViewById<TextView>(R.id.tvName).text = l.name
+                v.findViewById<TextView>(R.id.tvSub).text =
+                    String.format(Locale.US, "%.5f, %.5f", l.lat, l.lon)
+                v.findViewById<CheckBox>(R.id.cbSelect).apply {
+                    setOnCheckedChangeListener(null) // recycled row, drop the old listener first
+                    isChecked = l.name in selected
+                    setOnCheckedChangeListener { _, checked ->
+                        if (checked) selected.add(l.name) else selected.remove(l.name)
+                        updateDeleteButton(dlg, selected.size)
+                    }
+                }
+                v.findViewById<ImageButton>(R.id.btnFavorite).apply {
+                    setImageResource(
+                        if (l.favorite) android.R.drawable.btn_star_big_on else android.R.drawable.btn_star_big_off
+                    )
+                    setOnClickListener {
+                        setFavorite(setOf(l.name), !l.favorite)
+                        refill(shown, favoritesOnly, selected, rows, empty)
+                        updateDeleteButton(dlg, selected.size)
+                    }
+                }
+                v.findViewById<View>(R.id.textArea).setOnClickListener {
+                    dlg?.dismiss()
+                    b.map.controller.setZoom(18.0)
+                    b.map.controller.animateTo(GeoPoint(l.lat, l.lon))
+                }
+                return v
+            }
+        }
+        list.adapter = adapter
+
+        val filter = RadioGroup(this).apply {
+            orientation = RadioGroup.HORIZONTAL
+            setPadding(dp(20), 0, dp(20), 0)
+            val all = RadioButton(context).apply { id = View.generateViewId(); text = "All" }
+            val fav = RadioButton(context).apply { id = View.generateViewId(); text = "★ Favorites" }
+            addView(all)
+            addView(fav)
+            check(all.id)
+            setOnCheckedChangeListener { _, id ->
+                favoritesOnly = id == fav.id
+                refill(shown, favoritesOnly, selected, adapter, empty)
+                updateDeleteButton(dlg, selected.size)
+            }
+        }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(filter)
+            addView(empty)
+            addView(list)
+        }
+        refill(shown, favoritesOnly, selected, adapter, empty)
+
+        dlg = MaterialAlertDialogBuilder(this)
+            .setTitle("Landmarks")
+            .setView(content)
+            .setPositiveButton("Delete selected", null) // wired below so the dialog stays open
+            .setNegativeButton("Close", null)
+            .create()
+        dlg.setOnShowListener {
+            updateDeleteButton(dlg, selected.size)
+            dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val names = selected.toSet()
+                MaterialAlertDialogBuilder(this)
+                    .setMessage("Delete ${names.size} landmark${if (names.size == 1) "" else "s"}?")
+                    .setPositiveButton("Delete") { _, _ ->
+                        deleteLandmarks(names)
+                        refill(shown, favoritesOnly, selected, adapter, empty)
+                        updateDeleteButton(dlg, selected.size)
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
         }
         dlg.show()
     }
 
-    private fun showLandmarks() {
-        val list = store.landmarks()
-        showLibrary(
-            "Landmarks",
-            list.map { LibItem(it.name, String.format(Locale.US, "%.5f, %.5f", it.lat, it.lon)) }.toMutableList(),
-            "No landmarks yet. Tap the map in Landmark mode to add one.",
-            onPick = { i ->
-                b.map.controller.setZoom(18.0)
-                b.map.controller.animateTo(GeoPoint(list[i].lat, list[i].lon))
-            },
-            onDelete = { i ->
-                list.removeAt(i)
-                store.saveLandmarks(list)
-                reloadLandmarks()
-            }
-        )
+    /** Reloads the rows (favorites first) and drops selections that are no longer listed. */
+    private fun refill(
+        shown: MutableList<SavedLandmark>,
+        favoritesOnly: Boolean,
+        selected: MutableSet<String>,
+        adapter: ArrayAdapter<SavedLandmark>,
+        empty: TextView
+    ) {
+        shown.clear()
+        shown.addAll(landmarks.filter { !favoritesOnly || it.favorite }.sortedByDescending { it.favorite })
+        selected.retainAll(shown.map { it.name }.toSet())
+        adapter.notifyDataSetChanged()
+        empty.text = if (favoritesOnly) "No favorites yet. Tap ☆ on a landmark to add it."
+        else "No landmarks yet. Tap the map in Landmark mode to add one."
+        empty.visibility = if (shown.isEmpty()) View.VISIBLE else View.GONE
+    }
+
+    private fun updateDeleteButton(dlg: AlertDialog?, count: Int) {
+        dlg?.getButton(AlertDialog.BUTTON_POSITIVE)?.apply {
+            isEnabled = count > 0
+            text = if (count > 0) "Delete selected ($count)" else "Delete selected"
+        }
     }
 
     // ---------- saved routes ----------

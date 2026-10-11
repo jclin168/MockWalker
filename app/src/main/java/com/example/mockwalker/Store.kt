@@ -6,7 +6,7 @@ import org.json.JSONObject
 import org.osmdroid.util.GeoPoint
 
 data class SavedPlace(val name: String, val lat: Double, val lon: Double, val radiusM: Int)
-data class SavedLandmark(val name: String, val lat: Double, val lon: Double)
+data class SavedLandmark(val name: String, val lat: Double, val lon: Double, val favorite: Boolean = false)
 data class SavedRoute(
     val name: String,
     val points: List<GeoPoint>,
@@ -65,7 +65,12 @@ class Store(context: Context) {
             val arr = JSONArray(sp.getString("landmarks", "[]"))
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
-                out.add(SavedLandmark(o.getString("name"), o.getDouble("lat"), o.getDouble("lon")))
+                out.add(
+                    SavedLandmark(
+                        o.getString("name"), o.getDouble("lat"), o.getDouble("lon"),
+                        o.optBoolean("fav", false)
+                    )
+                )
             }
         } catch (_: Exception) {
         }
@@ -75,7 +80,10 @@ class Store(context: Context) {
     fun saveLandmarks(list: List<SavedLandmark>) {
         val arr = JSONArray()
         list.forEach {
-            arr.put(JSONObject().put("name", it.name).put("lat", it.lat).put("lon", it.lon))
+            arr.put(
+                JSONObject().put("name", it.name).put("lat", it.lat)
+                    .put("lon", it.lon).put("fav", it.favorite)
+            )
         }
         sp.edit().putString("landmarks", arr.toString()).apply()
     }

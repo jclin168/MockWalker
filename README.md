@@ -26,9 +26,12 @@ Android app that mocks GPS location while "walking" on an OpenStreetMap map (osm
 
 ## Landmark mode
 1. Switch to Landmark and tap the map (or search a place) to add a named landmark
-2. Landmarks are always shown on the map as a purple star with their name, in every mode
-3. Tap a landmark for options: Set as center (Circle), Add waypoint (Route), or Delete
-4. Landmarks lists them; pick one to jump to it
+2. Landmarks are always shown on the map as a purple star with their name, in every mode;
+   favorites are drawn larger in orange
+3. Tap a landmark for options: Set as center (Circle), Add waypoint (Route),
+   Add to / Remove from favorites, or Delete
+4. Landmarks lists them (favorites first) with an All / Favorites filter. Tap a name to jump
+   to it, tap the star to toggle favorite, check several and tap Delete selected to remove them
 
 ## Editing while walking
 The walk in progress is drawn in red and is independent of the editor. When a route starts,
