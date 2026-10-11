@@ -27,9 +27,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import org.osmdroid.util.GeoPoint
 import kotlin.math.PI
 
+/** What the service is walking right now; drawn by the UI separately from the editor. */
+sealed class ActiveWalk {
+    data class Circle(val center: GeoPoint, val radiusM: Double) : ActiveWalk()
+    data class Route(val path: RoutePath) : ActiveWalk()
+}
+
 /** Shared state observed by the UI. */
 object MockState {
     val running = MutableStateFlow(false)
+    val walk = MutableStateFlow<ActiveWalk?>(null)
     val position = MutableStateFlow<GeoPoint?>(null)
     val arrived = MutableStateFlow(false)
     val error = MutableStateFlow<String?>(null)
@@ -118,10 +125,12 @@ class MockLocationService : Service() {
                     return START_NOT_STICKY
                 }
                 if (!active) start()
+                publishWalk()
                 updateNotification()
             }
             ACTION_UPDATE -> if (active) {
                 readParams(intent, includeSetup = false)
+                publishWalk()
                 updateNotification()
             } else {
                 stopSelf()
@@ -150,6 +159,15 @@ class MockLocationService : Service() {
         radiusM = intent.getDoubleExtra(EXTRA_RADIUS_M, radiusM).coerceAtLeast(1.0)
         speedKph = intent.getDoubleExtra(EXTRA_SPEED_KPH, speedKph).coerceAtLeast(0.0)
         return true
+    }
+
+    private fun publishWalk() {
+        val r = route
+        MockState.walk.value = when {
+            !active -> null
+            routeMode && r != null -> ActiveWalk.Route(r)
+            else -> ActiveWalk.Circle(GeoPoint(centerLat, centerLon), radiusM)
+        }
     }
 
     private fun start() {
@@ -332,6 +350,7 @@ class MockLocationService : Service() {
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
         MockState.running.value = false
+        MockState.walk.value = null
         MockState.arrived.value = false
         MockState.position.value = null
         super.onDestroy()

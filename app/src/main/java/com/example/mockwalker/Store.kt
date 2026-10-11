@@ -6,6 +6,7 @@ import org.json.JSONObject
 import org.osmdroid.util.GeoPoint
 
 data class SavedPlace(val name: String, val lat: Double, val lon: Double, val radiusM: Int)
+data class SavedLandmark(val name: String, val lat: Double, val lon: Double)
 data class SavedRoute(
     val name: String,
     val points: List<GeoPoint>,
@@ -13,7 +14,7 @@ data class SavedRoute(
     val breaks: Set<Int> = emptySet() // pen-up jumps, see RoutePath
 )
 
-/** Persists favorite places and routes as JSON in SharedPreferences. */
+/** Persists favorite places, landmarks and routes as JSON in SharedPreferences. */
 class Store(context: Context) {
     private val sp = context.applicationContext
         .getSharedPreferences("mockwalker_store", Context.MODE_PRIVATE)
@@ -54,6 +55,36 @@ class Store(context: Context) {
         val idx = l.indexOfFirst { it.name == p.name }
         if (idx >= 0) l[idx] = p else l.add(p)
         savePlaces(l)
+    }
+
+    // ----- landmarks -----
+
+    fun landmarks(): MutableList<SavedLandmark> {
+        val out = mutableListOf<SavedLandmark>()
+        try {
+            val arr = JSONArray(sp.getString("landmarks", "[]"))
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                out.add(SavedLandmark(o.getString("name"), o.getDouble("lat"), o.getDouble("lon")))
+            }
+        } catch (_: Exception) {
+        }
+        return out
+    }
+
+    fun saveLandmarks(list: List<SavedLandmark>) {
+        val arr = JSONArray()
+        list.forEach {
+            arr.put(JSONObject().put("name", it.name).put("lat", it.lat).put("lon", it.lon))
+        }
+        sp.edit().putString("landmarks", arr.toString()).apply()
+    }
+
+    fun upsertLandmark(l: SavedLandmark) {
+        val list = landmarks()
+        val idx = list.indexOfFirst { it.name == l.name }
+        if (idx >= 0) list[idx] = l else list.add(l)
+        saveLandmarks(list)
     }
 
     // ----- routes -----

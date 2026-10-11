@@ -4,7 +4,12 @@ import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.GradientDrawable
 import android.location.LocationManager
 import android.os.Build
@@ -53,15 +58,21 @@ import java.net.URL
 import java.net.URLEncoder
 import java.util.Locale
 import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.hypot
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 // OSM tile and Nominatim policies require a distinct, stable User-Agent naming the app;
 // the package name (com.example.*) or a library default gets blocked
 private const val USER_AGENT = "MockWalker/${BuildConfig.VERSION_NAME} (Android)"
 
+private val WALK_COLOR = Color.rgb(229, 57, 53) // the walker and whatever it is walking
+private val LANDMARK_COLOR = Color.rgb(142, 36, 170)
+
 class MainActivity : AppCompatActivity() {
 
-    private enum class Mode { CIRCLE, ROUTE }
+    private enum class Mode { CIRCLE, ROUTE, LANDMARK }
 
     private data class LibItem(val title: String, val subtitle: String)
 
@@ -72,6 +83,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var centerMarker: Marker
     private lateinit var walkerMarker: Marker
     private val waypointMarkers = mutableListOf<Marker>()
+
+    // the walk running in the service, drawn apart from the editor so editing never touches it
+    private lateinit var activeCircle: Polygon
+    private lateinit var activeSlot: Polyline // only marks the z-order slot for activeLines
+    private val activeLines = mutableListOf<Polyline>()
+    private var activeWalk: ActiveWalk? = null
+    private var handOffDraft = false // clear the editor once the started route is running
+
+    private var landmarks = listOf<SavedLandmark>()
+    private val landmarkMarkers = mutableListOf<Marker>()
 
     private var mode = Mode.CIRCLE
     private var center: GeoPoint? = null
@@ -119,6 +140,13 @@ class MainActivity : AppCompatActivity() {
         b.map.controller.setZoom(18.0)
         b.map.controller.setCenter(initialPoint())
 
+        activeCircle = Polygon().apply {
+            fillPaint.color = Color.argb(35, 229, 57, 53)
+            outlinePaint.color = WALK_COLOR
+            outlinePaint.strokeWidth = 5f
+            isEnabled = false
+        }
+        activeSlot = Polyline().apply { isEnabled = false }
         circle = Polygon().apply {
             fillPaint.color = Color.argb(45, 30, 136, 229)
             outlinePaint.color = Color.rgb(30, 136, 229)
@@ -135,7 +163,7 @@ class MainActivity : AppCompatActivity() {
             isEnabled = false
         }
         walkerMarker = Marker(b.map).apply {
-            icon = dot(Color.rgb(229, 57, 53), 22)
+            icon = dot(WALK_COLOR, 22)
             setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
             isEnabled = false
         }
@@ -150,7 +178,10 @@ class MainActivity : AppCompatActivity() {
         })
 
         // events overlay goes last so it is on top and receives taps first
-        b.map.overlays.addAll(listOf(circle, polyline, centerMarker, walkerMarker, events))
+        b.map.overlays.addAll(
+            listOf(activeCircle, activeSlot, circle, polyline, centerMarker, walkerMarker, events)
+        )
+        reloadLandmarks()
     }
 
     private fun dot(color: Int, sizeDp: Int) = GradientDrawable().apply {
@@ -178,8 +209,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onMapTap(p: GeoPoint) {
-        if (running) {
-            toast("Stop walking before editing")
+        landmarkAt(p)?.let {
+            showLandmark(it)
             return
         }
         when (mode) {
@@ -188,6 +219,7 @@ class MainActivity : AppCompatActivity() {
                 waypoints.add(p)
                 refreshAll()
             }
+            Mode.LANDMARK -> addLandmark(p, null)
         }
     }
 
@@ -206,7 +238,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun redrawCircle() {
         val c = center
-        val show = mode == Mode.CIRCLE && c != null
+        // the running circle is drawn by renderWalk, skip the identical draft on top of it
+        val show = mode == Mode.CIRCLE && c != null && (activeWalk as? ActiveWalk.Circle)?.center != c
         centerMarker.isEnabled = show
         circle.isEnabled = show
         if (show && c != null) {
@@ -261,18 +294,18 @@ class MainActivity : AppCompatActivity() {
     private fun radiusM() = b.sliderRadius.value.toDouble()
     private fun speedKph() = b.sliderSpeed.value.toDouble()
 
-    private val lockWhileRunning: List<View>
-        get() = listOf(
-            b.btnModeCircle, b.btnModeRoute, b.btnEndOnce, b.btnEndPingPong, b.btnEndLoop,
-            b.btnUndo, b.btnClear, b.btnPlaces, b.btnRoutes, b.btnShapes
-        )
-
     private fun setupControls() {
         b.modeGroup.check(R.id.btnModeCircle)
         b.endGroup.check(R.id.btnEndOnce)
 
         b.modeGroup.addOnButtonCheckedListener { _, id, checked ->
-            if (checked) setMode(if (id == R.id.btnModeRoute) Mode.ROUTE else Mode.CIRCLE)
+            if (checked) setMode(
+                when (id) {
+                    R.id.btnModeRoute -> Mode.ROUTE
+                    R.id.btnModeLandmark -> Mode.LANDMARK
+                    else -> Mode.CIRCLE
+                }
+            )
         }
         b.endGroup.addOnButtonCheckedListener { _, _, checked ->
             if (checked) {
@@ -314,6 +347,7 @@ class MainActivity : AppCompatActivity() {
         b.btnSaveRoute.setOnClickListener { saveRoute() }
         b.btnRoutes.setOnClickListener { showRoutes() }
         b.btnShapes.setOnClickListener { showShapes() }
+        b.btnLandmarks.setOnClickListener { showLandmarks() }
 
         setMode(Mode.CIRCLE)
         onParamsChanged()
@@ -323,6 +357,7 @@ class MainActivity : AppCompatActivity() {
         mode = m
         b.circleGroup.visibility = if (m == Mode.CIRCLE) View.VISIBLE else View.GONE
         b.routeGroup.visibility = if (m == Mode.ROUTE) View.VISIBLE else View.GONE
+        b.landmarkGroup.visibility = if (m == Mode.LANDMARK) View.VISIBLE else View.GONE
         refreshAll()
     }
 
@@ -334,12 +369,15 @@ class MainActivity : AppCompatActivity() {
         redrawCircle()
         updateStatus()
         if (running) {
-            startService(
-                Intent(this, MockLocationService::class.java)
-                    .setAction(MockLocationService.ACTION_UPDATE)
-                    .putExtra(MockLocationService.EXTRA_RADIUS_M, r)
-                    .putExtra(MockLocationService.EXTRA_SPEED_KPH, v)
-            )
+            val update = Intent(this, MockLocationService::class.java)
+                .setAction(MockLocationService.ACTION_UPDATE)
+                .putExtra(MockLocationService.EXTRA_SPEED_KPH, v)
+            // radius edits the running circle only while the draft is still that circle
+            val w = activeWalk
+            if (w is ActiveWalk.Circle && center == w.center) {
+                update.putExtra(MockLocationService.EXTRA_RADIUS_M, r)
+            }
+            startService(update)
         }
     }
 
@@ -349,27 +387,35 @@ class MainActivity : AppCompatActivity() {
                 String.format(Locale.US, "Center: %.6f, %.6f", it.latitude, it.longitude)
             } ?: "Tap the map to choose a location"
             Mode.ROUTE -> "Route: ${waypoints.size} waypoints"
+            Mode.LANDMARK -> "Landmarks: ${landmarks.size}"
         }
     }
 
     private fun updateStatus() {
-        if (running && MockState.arrived.value) {
-            b.tvStatus.text = "Arrived at route end. Location is held until you stop."
-            return
-        }
         val v = speedKph()
-        b.tvStatus.text = when (mode) {
+        val walking = when (val w = activeWalk) {
+            is ActiveWalk.Route ->
+                if (MockState.arrived.value) "Arrived at route end. Location is held until you stop."
+                else String.format(Locale.US, "Walking the red route, %.0f m", w.path.totalM)
+            is ActiveWalk.Circle -> String.format(Locale.US, "Walking the red circle, radius %.0f m", w.radiusM)
+            null -> null
+        }
+        val draft = when (mode) {
             Mode.CIRCLE -> {
                 val circ = 2 * PI * radiusM()
                 String.format(Locale.US, "Circumference %.0f m, one lap %s", circ, mmss(circ / (v / 3.6)))
             }
             Mode.ROUTE ->
-                if (waypoints.size < 2) "Tap the map to add at least 2 waypoints"
-                else {
+                if (waypoints.size < 2) {
+                    if (activeWalk != null) "Tap the map to draw another route"
+                    else "Tap the map to add at least 2 waypoints"
+                } else {
                     val len = currentPath().totalM
                     String.format(Locale.US, "Length %.0f m, one pass %s", len, mmss(len / (v / 3.6)))
                 }
+            Mode.LANDMARK -> "Tap the map to add a landmark, tap a landmark for options"
         }
+        b.tvStatus.text = if (walking == null) draft else "$walking\n$draft"
     }
 
     private fun mmss(sec: Double): String {
@@ -401,11 +447,16 @@ class MainActivity : AppCompatActivity() {
                     .putExtra(MockLocationService.EXTRA_LON, c.longitude)
                     .putExtra(MockLocationService.EXTRA_RADIUS_M, radiusM())
             }
+            Mode.LANDMARK -> {
+                toast("Switch to Circle or Route to start walking")
+                return
+            }
             Mode.ROUTE -> {
                 if (waypoints.size < 2) {
                     toast("Add at least 2 waypoints")
                     return
                 }
+                handOffDraft = true
                 intent.putExtra(MockLocationService.EXTRA_MODE, "route")
                     .putExtra(
                         MockLocationService.EXTRA_PATH_LATS,
@@ -433,10 +484,12 @@ class MainActivity : AppCompatActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch { MockState.running.collect { renderRunning(it) } }
                 launch { MockState.position.collect { renderWalker(it) } }
+                launch { MockState.walk.collect { renderWalk(it) } }
                 launch { MockState.arrived.collect { updateStatus() } }
                 launch {
                     MockState.error.collect { msg ->
                         if (msg != null) {
+                            handOffDraft = false
                             showError(msg)
                             MockState.error.value = null
                         }
@@ -449,12 +502,44 @@ class MainActivity : AppCompatActivity() {
     private fun renderRunning(isRunning: Boolean) {
         running = isRunning
         b.btnStart.text = if (isRunning) "Stop walking" else "Start walking"
-        lockWhileRunning.forEach { it.isEnabled = !isRunning }
         if (!isRunning) {
             walkerMarker.isEnabled = false
             b.map.invalidate()
         }
         updateStatus()
+    }
+
+    /** Draws the running walk in red; it stays until the service stops, whatever the editor does. */
+    private fun renderWalk(w: ActiveWalk?) {
+        activeWalk = w
+        activeLines.forEach { b.map.overlays.remove(it) }
+        activeLines.clear()
+        activeCircle.isEnabled = w is ActiveWalk.Circle
+        when (w) {
+            is ActiveWalk.Circle ->
+                activeCircle.setPoints(GeoMath.circlePoints(w.center.latitude, w.center.longitude, w.radiusM))
+            is ActiveWalk.Route -> {
+                val lineAt = b.map.overlays.indexOf(activeSlot) + 1
+                w.path.strokes.forEach { stroke ->
+                    val line = Polyline().apply {
+                        outlinePaint.color = Color.argb(190, 229, 57, 53)
+                        outlinePaint.strokeWidth = 12f
+                        setPoints(stroke)
+                    }
+                    b.map.overlays.add(lineAt + activeLines.size, line)
+                    activeLines.add(line)
+                }
+                if (handOffDraft) {
+                    // the started route now lives in the service, free the editor for the next one
+                    handOffDraft = false
+                    waypoints.clear()
+                    waypointBreaks.clear()
+                    suggestedRouteName = null
+                }
+            }
+            null -> {}
+        }
+        refreshAll()
     }
 
     private fun renderWalker(p: GeoPoint?) {
@@ -514,11 +599,127 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadPlace(p: SavedPlace) {
         b.modeGroup.check(R.id.btnModeCircle)
-        b.sliderRadius.value = p.radiusM.toFloat().coerceIn(1f, 100f)
         val gp = GeoPoint(p.lat, p.lon)
-        selectCenter(gp)
+        selectCenter(gp) // first, so the new radius does not resize a circle being walked
+        b.sliderRadius.value = p.radiusM.toFloat().coerceIn(1f, 100f)
         b.map.controller.setZoom(18.0)
         b.map.controller.animateTo(gp)
+    }
+
+    // ---------- landmarks ----------
+
+    private fun reloadLandmarks() {
+        landmarks = store.landmarks()
+        landmarkMarkers.forEach { b.map.overlays.remove(it) }
+        landmarkMarkers.clear()
+        val insertAt = b.map.overlays.indexOf(centerMarker) // above lines, below waypoints and walker
+        landmarks.forEach { l ->
+            val (icon, anchorY) = landmarkIcon(l.name)
+            val m = Marker(b.map).apply {
+                position = GeoPoint(l.lat, l.lon)
+                this.icon = icon
+                setAnchor(Marker.ANCHOR_CENTER, anchorY)
+                setInfoWindow(null)
+            }
+            b.map.overlays.add(insertAt + landmarkMarkers.size, m)
+            landmarkMarkers.add(m)
+        }
+        b.map.invalidate()
+        updateHeader()
+    }
+
+    /** Purple star badge with the name underneath; returns the icon and the badge center as anchor. */
+    private fun landmarkIcon(name: String): Pair<BitmapDrawable, Float> {
+        val d = resources.displayMetrics.density
+        val r = 12 * d
+        val label = if (name.length > 20) name.take(19) + "…" else name
+        val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 13 * d
+            typeface = Typeface.DEFAULT_BOLD
+            textAlign = Paint.Align.CENTER
+        }
+        val halo = 3 * d
+        val w = max(2 * r + 4 * d, text.measureText(label) + 2 * halo)
+        val cy = r + 2 * d
+        val labelTop = 2 * cy + 2 * d
+        val h = labelTop + text.descent() - text.ascent() + halo
+        val bmp = Bitmap.createBitmap(w.toInt() + 1, h.toInt() + 1, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val cx = w / 2
+        val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+        fill.color = Color.WHITE
+        c.drawCircle(cx, cy, r + 2 * d, fill)
+        fill.color = LANDMARK_COLOR
+        c.drawCircle(cx, cy, r, fill)
+        val star = Paint(text).apply { color = Color.WHITE; textSize = 15 * d }
+        c.drawText("★", cx, cy - (star.ascent() + star.descent()) / 2, star)
+        val baseline = labelTop - text.ascent()
+        text.style = Paint.Style.STROKE
+        text.strokeWidth = halo
+        text.color = Color.WHITE
+        c.drawText(label, cx, baseline, text)
+        text.style = Paint.Style.FILL
+        text.color = LANDMARK_COLOR
+        c.drawText(label, cx, baseline, text)
+        return BitmapDrawable(resources, bmp) to cy / bmp.height
+    }
+
+    /** The landmark whose badge or label is under the tap, nearest first. */
+    private fun landmarkAt(p: GeoPoint): SavedLandmark? {
+        val proj = b.map.projection
+        val tap = proj.toPixels(p, null)
+        return landmarks
+            .map { l -> l to proj.toPixels(GeoPoint(l.lat, l.lon), null) }
+            .filter { (_, pt) -> abs(pt.x - tap.x) <= dp(28) && tap.y - pt.y in -dp(20)..dp(40) }
+            .minByOrNull { (_, pt) -> hypot((pt.x - tap.x).toDouble(), (pt.y - tap.y).toDouble()) }
+            ?.first
+    }
+
+    private fun addLandmark(p: GeoPoint, suggested: String?) {
+        promptName("New landmark", suggested ?: "Landmark ${landmarks.size + 1}") { name ->
+            store.upsertLandmark(SavedLandmark(name, p.latitude, p.longitude))
+            reloadLandmarks()
+            toast("Added \"$name\"")
+        }
+    }
+
+    private fun showLandmark(l: SavedLandmark) {
+        val gp = GeoPoint(l.lat, l.lon)
+        val dlg = MaterialAlertDialogBuilder(this)
+            .setTitle(l.name)
+            .setMessage(String.format(Locale.US, "%.6f, %.6f", l.lat, l.lon))
+            .setNeutralButton("Delete") { _, _ ->
+                store.saveLandmarks(store.landmarks().filterNot { it.name == l.name })
+                reloadLandmarks()
+            }
+            .setNegativeButton("Close", null)
+        when (mode) {
+            Mode.CIRCLE -> dlg.setPositiveButton("Set as center") { _, _ -> selectCenter(gp) }
+            Mode.ROUTE -> dlg.setPositiveButton("Add waypoint") { _, _ ->
+                waypoints.add(gp)
+                refreshAll()
+            }
+            Mode.LANDMARK -> {}
+        }
+        dlg.show()
+    }
+
+    private fun showLandmarks() {
+        val list = store.landmarks()
+        showLibrary(
+            "Landmarks",
+            list.map { LibItem(it.name, String.format(Locale.US, "%.5f, %.5f", it.lat, it.lon)) }.toMutableList(),
+            "No landmarks yet. Tap the map in Landmark mode to add one.",
+            onPick = { i ->
+                b.map.controller.setZoom(18.0)
+                b.map.controller.animateTo(GeoPoint(list[i].lat, list[i].lon))
+            },
+            onDelete = { i ->
+                list.removeAt(i)
+                store.saveLandmarks(list)
+                reloadLandmarks()
+            }
+        )
     }
 
     // ---------- saved routes ----------
@@ -766,14 +967,18 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { geocode(q) } }
             result.onSuccess { hit ->
-                if (hit == null) toast("No result") else goTo(GeoPoint(hit.first, hit.second))
+                if (hit == null) toast("No result") else goTo(GeoPoint(hit.first, hit.second), q)
             }.onFailure { toast("Search failed") }
         }
     }
 
-    private fun goTo(p: GeoPoint) {
+    private fun goTo(p: GeoPoint, label: String? = null) {
         b.map.controller.animateTo(p)
-        if (!running && mode == Mode.CIRCLE) selectCenter(p)
+        when (mode) {
+            Mode.CIRCLE -> selectCenter(p)
+            Mode.LANDMARK -> addLandmark(p, label)
+            Mode.ROUTE -> {}
+        }
     }
 
     private fun parseLatLon(s: String): GeoPoint? {
