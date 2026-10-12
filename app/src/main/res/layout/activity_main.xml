@@ -303,6 +303,14 @@
                     android:valueFrom="1"
                     android:valueTo="30" />
 
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switchRandomSpeed"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:checked="true"
+                    android:paddingStart="4dp"
+                    android:text="Random speed ±5 km/h" />
+
                 <TextView
                     android:id="@+id/tvStatus"
                     android:layout_width="match_parent"

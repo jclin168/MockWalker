@@ -83,4 +83,20 @@ class RoutePath(points: List<GeoPoint>, val endMode: EndMode, breaks: Set<Int> =
         heading = ((heading % 360.0) + 360.0) % 360.0
         return Sample(lat, lon, heading, finished)
     }
+
+    /**
+     * Direction of travel at [traveled]: the bearing toward the point [lookaheadM] further along,
+     * so the heading starts to turn as a corner approaches. Falls back to the current leg's
+     * bearing at the end of the route or when a pen-up jump lies within the lookahead.
+     */
+    fun headingAt(traveled: Double, lookaheadM: Double): Double {
+        val here = sampleAt(traveled)
+        if (here.finished || lookaheadM <= 0.0) return here.headingDeg
+        val ahead = sampleAt(traveled + lookaheadM)
+        val gap = GeoMath.distance(here.lat, here.lon, ahead.lat, ahead.lon)
+        // walking never covers more than the lookahead in a straight line, a longer gap is a jump
+        if (gap < 0.1 * lookaheadM || gap > lookaheadM + 0.5) return here.headingDeg
+        val deg = Math.toDegrees(GeoMath.bearing(here.lat, here.lon, ahead.lat, ahead.lon))
+        return ((deg % 360.0) + 360.0) % 360.0
+    }
 }

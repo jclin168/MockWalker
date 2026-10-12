@@ -26,6 +26,7 @@ import com.google.android.gms.location.LocationServices
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.osmdroid.util.GeoPoint
 import kotlin.math.PI
+import kotlin.math.min
 
 /** What the service is walking right now; drawn by the UI separately from the editor. */
 sealed class ActiveWalk {
@@ -38,6 +39,8 @@ object MockState {
     val running = MutableStateFlow(false)
     val walk = MutableStateFlow<ActiveWalk?>(null)
     val position = MutableStateFlow<GeoPoint?>(null)
+    val headingDeg = MutableStateFlow(0f)
+    val currentSpeedKph = MutableStateFlow(0.0)
     val arrived = MutableStateFlow(false)
     val error = MutableStateFlow<String?>(null)
 }
@@ -46,6 +49,8 @@ object MockState {
  * Pushes a moving position to the system as a mock GPS/network location.
  *  - circle mode: angle += (speed_mps / radius_m) * dt
  *  - route mode : traveled += speed_mps * dt, then position = point on the polyline at that distance
+ * With random speed on, speed_mps drifts within +/- 5 km/h of the chosen speed. The reported
+ * bearing follows the direction of travel and turns smoothly at corners.
  */
 class MockLocationService : Service() {
 
@@ -58,6 +63,7 @@ class MockLocationService : Service() {
         const val EXTRA_LON = "lon"
         const val EXTRA_RADIUS_M = "radius_m"
         const val EXTRA_SPEED_KPH = "speed_kph"
+        const val EXTRA_SPEED_RANDOM = "speed_random"
         const val EXTRA_PATH_LATS = "path_lats"
         const val EXTRA_PATH_LONS = "path_lons"
         const val EXTRA_END_MODE = "end_mode"
@@ -66,6 +72,8 @@ class MockLocationService : Service() {
         private const val CHANNEL_ID = "mock_walk"
         private const val NOTIF_ID = 1
         private const val UPDATE_INTERVAL_MS = 1000L
+        private const val MIN_SPEED_KPH = 1.0 // random speed never drops below this
+        private const val HEADING_LOOKAHEAD_M = 3.0
     }
 
     private lateinit var lm: LocationManager
@@ -78,6 +86,11 @@ class MockLocationService : Service() {
     private var centerLon = 0.0
     private var radiusM = 30.0
     private var speedKph = 5.0
+    private var speedRandom = false
+    private val speedJitter = SpeedJitter()
+    private val headingSmoother = HeadingSmoother()
+    private var lastLat = Double.NaN
+    private var lastLon = Double.NaN
     private var angleRad = 0.0
     private var traveledM = 0.0
     private var lastTickMs = 0L
@@ -158,6 +171,7 @@ class MockLocationService : Service() {
         }
         radiusM = intent.getDoubleExtra(EXTRA_RADIUS_M, radiusM).coerceAtLeast(1.0)
         speedKph = intent.getDoubleExtra(EXTRA_SPEED_KPH, speedKph).coerceAtLeast(0.0)
+        speedRandom = intent.getBooleanExtra(EXTRA_SPEED_RANDOM, speedRandom)
         return true
     }
 
@@ -178,6 +192,10 @@ class MockLocationService : Service() {
         active = true
         angleRad = 0.0 // circle starts at the north point
         traveledM = 0.0 // route starts at the first waypoint
+        speedJitter.reset()
+        headingSmoother.reset()
+        lastLat = Double.NaN
+        lastLon = Double.NaN
         lastTickMs = SystemClock.elapsedRealtime()
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "mockwalker:walk").apply {
@@ -244,11 +262,16 @@ class MockLocationService : Service() {
         val now = SystemClock.elapsedRealtime()
         val dtSec = (now - lastTickMs) / 1000.0
         lastTickMs = now
-        val speedMps = speedKph / 3.6
+        // the jitter keeps drifting even when off, so turning it on does not jump the pace
+        val offsetKph = speedJitter.step(dtSec)
+        val kph = if (speedRandom && speedKph > 0.0) {
+            (speedKph + offsetKph).coerceAtLeast(min(MIN_SPEED_KPH, speedKph))
+        } else speedKph
+        val speedMps = kph / 3.6
 
-        var lat: Double
-        var lon: Double
-        var heading: Float
+        val lat: Double
+        val lon: Double
+        val targetHeading: Double
         var reportedSpeed = speedMps.toFloat()
 
         val r = route
@@ -257,7 +280,7 @@ class MockLocationService : Service() {
             val s = r.sampleAt(traveledM)
             lat = s.lat
             lon = s.lon
-            heading = s.headingDeg.toFloat()
+            targetHeading = r.headingAt(traveledM, HEADING_LOOKAHEAD_M)
             if (s.finished) {
                 reportedSpeed = 0f
                 if (!MockState.arrived.value) MockState.arrived.value = true
@@ -268,8 +291,14 @@ class MockLocationService : Service() {
             lat = la
             lon = lo
             // moving clockwise, heading is tangent to the circle
-            heading = ((Math.toDegrees(angleRad) + 90.0) % 360.0).toFloat()
+            targetHeading = Math.toDegrees(angleRad) + 90.0
         }
+        // a pen-up jump teleports, so face the new direction at once instead of turning
+        val moved = if (lastLat.isNaN()) 0.0 else GeoMath.distance(lastLat, lastLon, lat, lon)
+        val jumped = moved > speedMps * dtSec + 5.0
+        lastLat = lat
+        lastLon = lon
+        val heading = headingSmoother.step(targetHeading, dtSec, snap = jumped).toFloat()
 
         fun makeLocation(provider: String) = Location(provider).apply {
             latitude = lat
@@ -299,6 +328,8 @@ class MockLocationService : Service() {
             gmsFused?.setMockLocation(makeLocation("fused"))
         } catch (_: SecurityException) {
         }
+        MockState.currentSpeedKph.value = reportedSpeed * 3.6
+        MockState.headingDeg.value = heading
         MockState.position.value = GeoPoint(lat, lon)
     }
 
@@ -312,10 +343,11 @@ class MockLocationService : Service() {
             this, 1, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
+        val speed = String.format("%.1f km/h", speedKph) + if (speedRandom) " ±5" else ""
         val text = if (routeMode) {
-            String.format("%.1f km/h, route %.0f m", speedKph, route?.totalM ?: 0.0)
+            String.format("%s, route %.0f m", speed, route?.totalM ?: 0.0)
         } else {
-            String.format("%.1f km/h, radius %.0f m", speedKph, radiusM)
+            String.format("%s, radius %.0f m", speed, radiusM)
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
@@ -353,6 +385,7 @@ class MockLocationService : Service() {
         MockState.walk.value = null
         MockState.arrived.value = false
         MockState.position.value = null
+        MockState.currentSpeedKph.value = 0.0
         super.onDestroy()
     }
 }

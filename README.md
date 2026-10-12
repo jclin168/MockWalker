@@ -24,6 +24,14 @@ Android app that mocks GPS location while "walking" on an OpenStreetMap map (osm
 4. Save stores the route. Routes lists, loads and deletes them
 5. Speed can change live while walking
 
+## Speed and heading
+- Random speed ±5 km/h (on by default) lets the pace drift up to 5 km/h above or below the
+  chosen speed (never below 1 km/h). A new target pace is picked every 4 to 12 seconds and
+  approached gradually; the live speed is shown next to the speed setting while walking
+- The reported bearing follows the direction of travel: on a route it looks a few meters ahead
+  so it turns into corners smoothly, on a circle it is the tangent. The red walker arrow on the
+  map points the same way
+
 ## Landmark mode
 1. Switch to Landmark and tap the map (or search a place) to add a named landmark
 2. Landmarks are always shown on the map as a purple star with their name, in every mode;
@@ -36,7 +44,7 @@ Android app that mocks GPS location while "walking" on an OpenStreetMap map (osm
 ## Editing while walking
 The walk in progress is drawn in red and is independent of the editor. When a route starts,
 it is handed to the walker and the editor is cleared, so you can keep adding landmarks,
-drawing, saving or loading other routes and places. Only speed changes the running walk
+drawing, saving or loading other routes and places. Only speed (and random speed) changes the running walk
 (and radius, while the circle being edited is still the one being walked). The red walk
 disappears when you stop; save a route first if you want to walk it again.
 

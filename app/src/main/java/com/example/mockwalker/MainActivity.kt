@@ -8,6 +8,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Typeface
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.GradientDrawable
@@ -166,8 +167,9 @@ class MainActivity : AppCompatActivity() {
             isEnabled = false
         }
         walkerMarker = Marker(b.map).apply {
-            icon = dot(WALK_COLOR, 22)
+            icon = walkerArrow(WALK_COLOR, 26)
             setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+            isFlat = true
             isEnabled = false
         }
 
@@ -192,6 +194,29 @@ class MainActivity : AppCompatActivity() {
         setColor(color)
         setStroke(dp(2), Color.WHITE)
         setSize(dp(sizeDp), dp(sizeDp))
+    }
+
+    /** Red dot with a white arrowhead pointing up (north); rotated to the walking heading. */
+    private fun walkerArrow(color: Int, sizeDp: Int): BitmapDrawable {
+        val size = dp(sizeDp)
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val r = size / 2f
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.color = Color.WHITE
+        c.drawCircle(r, r, r, paint)
+        paint.color = color
+        c.drawCircle(r, r, r - dp(2), paint)
+        paint.color = Color.WHITE
+        val arrow = Path().apply {
+            moveTo(r, size * 0.18f)
+            lineTo(size * 0.74f, size * 0.74f)
+            lineTo(r, size * 0.6f)
+            lineTo(size * 0.26f, size * 0.74f)
+            close()
+        }
+        c.drawPath(arrow, paint)
+        return BitmapDrawable(resources, bmp)
     }
 
     private fun initialPoint(): GeoPoint {
@@ -296,6 +321,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun radiusM() = b.sliderRadius.value.toDouble()
     private fun speedKph() = b.sliderSpeed.value.toDouble()
+    private fun speedRandom() = b.switchRandomSpeed.isChecked
 
     private fun setupControls() {
         b.modeGroup.check(R.id.btnModeCircle)
@@ -318,6 +344,7 @@ class MainActivity : AppCompatActivity() {
         }
         b.sliderRadius.addOnChangeListener { _, _, _ -> onParamsChanged() }
         b.sliderSpeed.addOnChangeListener { _, _, _ -> onParamsChanged() }
+        b.switchRandomSpeed.setOnCheckedChangeListener { _, _ -> onParamsChanged() }
 
         b.btnStart.setOnClickListener { if (running) stopMock() else startMock() }
         b.btnSearch.setOnClickListener { doSearch() }
@@ -368,13 +395,14 @@ class MainActivity : AppCompatActivity() {
         val r = radiusM()
         val v = speedKph()
         b.tvRadius.text = String.format(Locale.US, "Radius: %.0f m", r)
-        b.tvSpeed.text = String.format(Locale.US, "Speed: %.1f km/h", v)
+        renderSpeed()
         redrawCircle()
         updateStatus()
         if (running) {
             val update = Intent(this, MockLocationService::class.java)
                 .setAction(MockLocationService.ACTION_UPDATE)
                 .putExtra(MockLocationService.EXTRA_SPEED_KPH, v)
+                .putExtra(MockLocationService.EXTRA_SPEED_RANDOM, speedRandom())
             // radius edits the running circle only while the draft is still that circle
             val w = activeWalk
             if (w is ActiveWalk.Circle && center == w.center) {
@@ -382,6 +410,16 @@ class MainActivity : AppCompatActivity() {
             }
             startService(update)
         }
+    }
+
+    /** Chosen speed, plus the live one while a random-speed walk is running. */
+    private fun renderSpeed() {
+        var text = String.format(Locale.US, "Speed: %.1f km/h", speedKph())
+        if (speedRandom()) text += " ±5"
+        if (running && speedRandom()) {
+            text += String.format(Locale.US, " (now %.1f)", MockState.currentSpeedKph.value)
+        }
+        b.tvSpeed.text = text
     }
 
     private fun updateHeader() {
@@ -437,6 +475,7 @@ class MainActivity : AppCompatActivity() {
         val intent = Intent(this, MockLocationService::class.java)
             .setAction(MockLocationService.ACTION_START)
             .putExtra(MockLocationService.EXTRA_SPEED_KPH, speedKph())
+            .putExtra(MockLocationService.EXTRA_SPEED_RANDOM, speedRandom())
 
         when (mode) {
             Mode.CIRCLE -> {
@@ -487,6 +526,7 @@ class MainActivity : AppCompatActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch { MockState.running.collect { renderRunning(it) } }
                 launch { MockState.position.collect { renderWalker(it) } }
+                launch { MockState.currentSpeedKph.collect { renderSpeed() } }
                 launch { MockState.walk.collect { renderWalk(it) } }
                 launch { MockState.arrived.collect { updateStatus() } }
                 launch {
@@ -509,6 +549,7 @@ class MainActivity : AppCompatActivity() {
             walkerMarker.isEnabled = false
             b.map.invalidate()
         }
+        renderSpeed()
         updateStatus()
     }
 
@@ -550,6 +591,8 @@ class MainActivity : AppCompatActivity() {
             walkerMarker.isEnabled = false
         } else {
             walkerMarker.position = p
+            // osmdroid rotates markers counter-clockwise, headings are clockwise from north
+            walkerMarker.rotation = -MockState.headingDeg.value
             walkerMarker.isEnabled = true
         }
         b.map.invalidate()
