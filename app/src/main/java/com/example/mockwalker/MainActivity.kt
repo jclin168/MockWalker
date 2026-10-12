@@ -36,11 +36,13 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.example.mockwalker.databinding.ActivityMainBinding
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.slider.Slider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -104,6 +106,18 @@ class MainActivity : AppCompatActivity() {
     private val waypoints = mutableListOf<GeoPoint>()
     private val waypointBreaks = mutableSetOf<Int>() // indices that start a new stroke (pen-up jump)
     private val routeLines = mutableListOf<Polyline>() // one per stroke, drawn where `polyline` sits
+
+    /** A path lifted off the editor, kept until it is pasted again. */
+    private data class ClippedPath(
+        val points: List<GeoPoint>, val breaks: Set<Int>, val endMode: EndMode, val name: String?
+    )
+
+    private var clipboard: ClippedPath? = null
+
+    /** What the next map tap or search places: the drawn path itself, or the clipboard. */
+    private enum class Placing { MOVE, PASTE }
+
+    private var placing: Placing? = null
     private var running = false
 
     private val permLauncher =
@@ -237,6 +251,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onMapTap(p: GeoPoint) {
+        if (mode == Mode.ROUTE && placing != null) {
+            // a tapped landmark is a handy anchor, put the path's center on it
+            placePath(landmarkAt(p)?.let { GeoPoint(it.lat, it.lon) } ?: p)
+            return
+        }
         landmarkAt(p)?.let {
             showLandmark(it)
             return
@@ -258,6 +277,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshAll() {
+        if (placing == Placing.MOVE && waypoints.isEmpty()) placing = null
+        updatePathButtons()
         redrawCircle()
         redrawRoute()
         updateHeader()
@@ -377,6 +398,10 @@ class MainActivity : AppCompatActivity() {
         b.btnSaveRoute.setOnClickListener { saveRoute() }
         b.btnRoutes.setOnClickListener { showRoutes() }
         b.btnShapes.setOnClickListener { showShapes() }
+        b.btnMovePath.setOnClickListener { togglePlacing(Placing.MOVE) }
+        b.btnCutPath.setOnClickListener { cutPath() }
+        b.btnPastePath.setOnClickListener { togglePlacing(Placing.PASTE) }
+        b.btnRotatePath.setOnClickListener { showRotate() }
         b.btnLandmarks.setOnClickListener { showLandmarks() }
 
         setMode(Mode.CIRCLE)
@@ -385,6 +410,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setMode(m: Mode) {
         mode = m
+        placing = null
         b.circleGroup.visibility = if (m == Mode.CIRCLE) View.VISIBLE else View.GONE
         b.routeGroup.visibility = if (m == Mode.ROUTE) View.VISIBLE else View.GONE
         b.landmarkGroup.visibility = if (m == Mode.LANDMARK) View.VISIBLE else View.GONE
@@ -447,7 +473,11 @@ class MainActivity : AppCompatActivity() {
                 String.format(Locale.US, "Circumference %.0f m, one lap %s", circ, mmss(circ / (v / 3.6)))
             }
             Mode.ROUTE ->
-                if (waypoints.size < 2) {
+                if (placing == Placing.MOVE) {
+                    "Tap the map or search a place to move the route's center there"
+                } else if (placing == Placing.PASTE) {
+                    "Tap the map or search a place to paste the route centered there"
+                } else if (waypoints.size < 2) {
                     if (activeWalk != null) "Tap the map to draw another route"
                     else "Tap the map to add at least 2 waypoints"
                 } else {
@@ -923,13 +953,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadRoute(r: SavedRoute) {
         b.modeGroup.check(R.id.btnModeRoute)
-        b.endGroup.check(
-            when (r.endMode) {
-                EndMode.ONCE -> R.id.btnEndOnce
-                EndMode.PING_PONG -> R.id.btnEndPingPong
-                EndMode.LOOP -> R.id.btnEndLoop
-            }
-        )
+        checkEndMode(r.endMode)
         waypoints.clear()
         waypoints.addAll(r.points)
         waypointBreaks.clear()
@@ -1047,6 +1071,132 @@ class MainActivity : AppCompatActivity() {
         zoomToPoints(pts)
     }
 
+    // ---------- move, cut / paste, rotate ----------
+
+    private fun updatePathButtons() {
+        val hasPath = waypoints.isNotEmpty()
+        b.btnMovePath.isEnabled = hasPath
+        b.btnCutPath.isEnabled = hasPath
+        b.btnRotatePath.isEnabled = waypoints.size >= 2
+        b.btnPastePath.isEnabled = clipboard != null
+        b.btnMovePath.text = if (placing == Placing.MOVE) "Cancel" else "Move"
+        b.btnPastePath.text = if (placing == Placing.PASTE) "Cancel" else "Paste"
+    }
+
+    /** Waits for a tap or search to place the path; pressing the same button again cancels. */
+    private fun togglePlacing(what: Placing) {
+        placing = if (placing == what) null else what
+        refreshAll()
+    }
+
+    private fun cutPath() {
+        if (waypoints.isEmpty()) return
+        clipboard = ClippedPath(waypoints.toList(), waypointBreaks.toSet(), endMode(), suggestedRouteName)
+        waypoints.clear()
+        waypointBreaks.clear()
+        suggestedRouteName = null
+        placing = null
+        refreshAll()
+        toast("Route cut. Tap Paste, then tap the map or search where it goes")
+    }
+
+    private fun placePath(target: GeoPoint) {
+        when (placing) {
+            Placing.MOVE -> {
+                val moved = PathTransform.moveTo(waypoints, target)
+                waypoints.clear()
+                waypoints.addAll(moved)
+            }
+            Placing.PASTE -> {
+                val c = clipboard ?: return
+                // pasting replaces the draft; the clipboard is kept so it can be pasted again
+                checkEndMode(c.endMode)
+                waypoints.clear()
+                waypoints.addAll(PathTransform.moveTo(c.points, target))
+                waypointBreaks.clear()
+                waypointBreaks.addAll(c.breaks)
+                suggestedRouteName = c.name
+            }
+            null -> return
+        }
+        placing = null
+        refreshAll()
+        zoomToPoints(waypoints)
+    }
+
+    private fun checkEndMode(m: EndMode) = b.endGroup.check(
+        when (m) {
+            EndMode.ONCE -> R.id.btnEndOnce
+            EndMode.PING_PONG -> R.id.btnEndPingPong
+            EndMode.LOOP -> R.id.btnEndLoop
+        }
+    )
+
+    /** Turns the drawn path around its center with a live preview; Cancel puts it back. */
+    private fun showRotate() {
+        if (waypoints.size < 2) return
+        val original = waypoints.toList()
+        val pivot = PathTransform.center(original)
+        fun preview(deg: Double) {
+            waypoints.clear()
+            waypoints.addAll(PathTransform.rotate(original, deg, pivot))
+            redrawRoute()
+        }
+
+        val slider = Slider(this).apply {
+            valueFrom = -180f
+            valueTo = 180f
+            stepSize = 1f
+            value = 0f
+        }
+        val et = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_SIGNED or
+                InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setSingleLine()
+            setText("0")
+        }
+        var syncing = false
+        slider.addOnChangeListener { _, v, fromUser ->
+            if (!fromUser) return@addOnChangeListener
+            syncing = true
+            et.setText(v.roundToInt().toString())
+            et.setSelection(et.text.length)
+            syncing = false
+            preview(v.toDouble())
+        }
+        et.doAfterTextChanged { text ->
+            if (syncing) return@doAfterTextChanged
+            val deg = text.toString().toDoubleOrNull() ?: return@doAfterTextChanged
+            // any angle works, the slider shows its equivalent within -180..180
+            val wrapped = ((deg % 360.0) + 540.0) % 360.0 - 180.0
+            slider.value = wrapped.roundToInt().toFloat().coerceIn(-180f, 180f)
+            preview(deg)
+        }
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), 0)
+            addView(TextView(context).apply { text = "Degrees, clockwise (negative turns counter-clockwise)" })
+            addView(et)
+            addView(slider)
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Rotate route")
+            .setView(content)
+            .setPositiveButton("OK") { _, _ -> refreshAll() }
+            .setNegativeButton("Cancel") { _, _ ->
+                waypoints.clear()
+                waypoints.addAll(original)
+                refreshAll()
+            }
+            .setOnCancelListener {
+                waypoints.clear()
+                waypoints.addAll(original)
+                refreshAll()
+            }
+            .show()
+    }
+
     // ---------- dialogs ----------
 
     private fun promptName(title: String, default: String, onOk: (String) -> Unit) {
@@ -1137,7 +1287,7 @@ class MainActivity : AppCompatActivity() {
         when (mode) {
             Mode.CIRCLE -> selectCenter(p)
             Mode.LANDMARK -> addLandmark(p, label)
-            Mode.ROUTE -> {}
+            Mode.ROUTE -> if (placing != null) placePath(p)
         }
     }
 

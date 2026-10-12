@@ -267,6 +267,49 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="Shapes &amp; text" />
+
+                    <!-- move, cut/paste and rotate the drawn path as a whole -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <Button
+                            android:id="@+id/btnMovePath"
+                            style="@style/Widget.Material3.Button.TextButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:minWidth="0dp"
+                            android:text="Move" />
+
+                        <Button
+                            android:id="@+id/btnCutPath"
+                            style="@style/Widget.Material3.Button.TextButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:minWidth="0dp"
+                            android:text="Cut" />
+
+                        <Button
+                            android:id="@+id/btnPastePath"
+                            style="@style/Widget.Material3.Button.TextButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:minWidth="0dp"
+                            android:text="Paste" />
+
+                        <Button
+                            android:id="@+id/btnRotatePath"
+                            style="@style/Widget.Material3.Button.TextButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:minWidth="0dp"
+                            android:text="Rotate" />
+                    </LinearLayout>
                 </LinearLayout>
 
                 <!-- landmark-only controls -->
