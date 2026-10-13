@@ -19,7 +19,9 @@ Android app that mocks GPS location while "walking" on an OpenStreetMap map (osm
 
 ## Route mode
 1. Switch to Route and tap the map to add waypoints (green = start)
-2. Choose end behavior: Once (hold at the end), Back & forth, or Loop
+2. Choose end behavior: Once (hold at the end), Back & forth, Loop, or Random. Random treats
+   the waypoints (at least 3) as the outline of an area and wanders inside it: a new random
+   direction every 5 seconds, turning gradually, and bouncing back in at the edge
 3. Undo removes the last waypoint, Clear removes all
 4. Save stores the route. Routes lists, loads and deletes them
 5. Speed can change live while walking

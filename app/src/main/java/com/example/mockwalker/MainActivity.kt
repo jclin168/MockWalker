@@ -335,6 +335,7 @@ class MainActivity : AppCompatActivity() {
     private fun endMode() = when (b.endGroup.checkedButtonId) {
         R.id.btnEndPingPong -> EndMode.PING_PONG
         R.id.btnEndLoop -> EndMode.LOOP
+        R.id.btnEndRandom -> EndMode.RANDOM
         else -> EndMode.ONCE
     }
 
@@ -462,7 +463,8 @@ class MainActivity : AppCompatActivity() {
         val v = speedKph()
         val walking = when (val w = activeWalk) {
             is ActiveWalk.Route ->
-                if (MockState.arrived.value) "Arrived at route end. Location is held until you stop."
+                if (w.path.endMode == EndMode.RANDOM) "Random walk inside the red area"
+                else if (MockState.arrived.value) "Arrived at route end. Location is held until you stop."
                 else String.format(Locale.US, "Walking the red route, %.0f m", w.path.totalM)
             is ActiveWalk.Circle -> String.format(Locale.US, "Walking the red circle, radius %.0f m", w.radiusM)
             null -> null
@@ -477,6 +479,12 @@ class MainActivity : AppCompatActivity() {
                     "Tap the map or search a place to move the route's center there"
                 } else if (placing == Placing.PASTE) {
                     "Tap the map or search a place to paste the route centered there"
+                } else if (endMode() == EndMode.RANDOM) {
+                    if (waypoints.size < 3) "Tap the map to outline an area with at least 3 waypoints"
+                    else String.format(
+                        Locale.US, "Area %.0f m², random walk, new direction every 5 s",
+                        AreaWalker.areaM2(waypoints)
+                    )
                 } else if (waypoints.size < 2) {
                     if (activeWalk != null) "Tap the map to draw another route"
                     else "Tap the map to add at least 2 waypoints"
@@ -526,6 +534,10 @@ class MainActivity : AppCompatActivity() {
             Mode.ROUTE -> {
                 if (waypoints.size < 2) {
                     toast("Add at least 2 waypoints")
+                    return
+                }
+                if (endMode() == EndMode.RANDOM && waypoints.size < 3) {
+                    toast("A random-walk area needs at least 3 waypoints")
                     return
                 }
                 handOffDraft = true
@@ -949,6 +961,7 @@ class MainActivity : AppCompatActivity() {
         EndMode.ONCE -> "once"
         EndMode.PING_PONG -> "back & forth"
         EndMode.LOOP -> "loop"
+        EndMode.RANDOM -> "random walk"
     }
 
     private fun loadRoute(r: SavedRoute) {
@@ -1129,6 +1142,7 @@ class MainActivity : AppCompatActivity() {
             EndMode.ONCE -> R.id.btnEndOnce
             EndMode.PING_PONG -> R.id.btnEndPingPong
             EndMode.LOOP -> R.id.btnEndLoop
+            EndMode.RANDOM -> R.id.btnEndRandom
         }
     )
 

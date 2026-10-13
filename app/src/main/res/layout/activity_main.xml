@@ -199,6 +199,9 @@
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
+                            android:minWidth="0dp"
+                            android:paddingStart="4dp"
+                            android:paddingEnd="4dp"
                             android:text="Once" />
 
                         <com.google.android.material.button.MaterialButton
@@ -207,6 +210,9 @@
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
+                            android:minWidth="0dp"
+                            android:paddingStart="4dp"
+                            android:paddingEnd="4dp"
                             android:text="Back &amp; forth" />
 
                         <com.google.android.material.button.MaterialButton
@@ -215,7 +221,21 @@
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
+                            android:minWidth="0dp"
+                            android:paddingStart="4dp"
+                            android:paddingEnd="4dp"
                             android:text="Loop" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnEndRandom"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:minWidth="0dp"
+                            android:paddingStart="4dp"
+                            android:paddingEnd="4dp"
+                            android:text="Random" />
                     </com.google.android.material.button.MaterialButtonToggleGroup>
 
                     <LinearLayout

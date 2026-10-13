@@ -49,6 +49,7 @@ object MockState {
  * Pushes a moving position to the system as a mock GPS/network location.
  *  - circle mode: angle += (speed_mps / radius_m) * dt
  *  - route mode : traveled += speed_mps * dt, then position = point on the polyline at that distance
+ *  - random walk: wander inside the area the route encloses, new direction every 5 s (AreaWalker)
  * With random speed on, speed_mps drifts within +/- 5 km/h of the chosen speed. The reported
  * bearing follows the direction of travel and turns smoothly at corners.
  */
@@ -82,6 +83,7 @@ class MockLocationService : Service() {
 
     private var routeMode = false
     private var route: RoutePath? = null
+    private var areaWalker: AreaWalker? = null // set when the route's end mode is RANDOM
     private var centerLat = 0.0
     private var centerLon = 0.0
     private var radiusM = 30.0
@@ -133,7 +135,7 @@ class MockLocationService : Service() {
                     return START_NOT_STICKY
                 }
                 if (!readParams(intent, includeSetup = true)) {
-                    MockState.error.value = "A route needs at least 2 waypoints."
+                    MockState.error.value = "A route needs at least 2 waypoints, a random-walk area at least 3."
                     stopSelf()
                     return START_NOT_STICKY
                 }
@@ -162,9 +164,13 @@ class MockLocationService : Service() {
                 if (lats == null || lons == null || lats.size < 2 || lats.size != lons.size) return false
                 val end = EndMode.values().getOrElse(intent.getIntExtra(EXTRA_END_MODE, 0)) { EndMode.ONCE }
                 val breaks = intent.getIntArrayExtra(EXTRA_PATH_BREAKS)?.toSet() ?: emptySet()
-                route = RoutePath(lats.indices.map { GeoPoint(lats[it], lons[it]) }, end, breaks)
+                if (end == EndMode.RANDOM && lats.size < 3) return false
+                val pts = lats.indices.map { GeoPoint(lats[it], lons[it]) }
+                route = RoutePath(pts, end, breaks)
+                areaWalker = if (end == EndMode.RANDOM) AreaWalker(pts) else null
             } else {
                 route = null
+                areaWalker = null
                 centerLat = intent.getDoubleExtra(EXTRA_LAT, centerLat)
                 centerLon = intent.getDoubleExtra(EXTRA_LON, centerLon)
             }
@@ -275,7 +281,15 @@ class MockLocationService : Service() {
         var reportedSpeed = speedMps.toFloat()
 
         val r = route
-        if (routeMode && r != null) {
+        val area = areaWalker
+        if (routeMode && area != null) {
+            area.step(speedMps * dtSec, dtSec)
+            val p = area.position
+            lat = p.latitude
+            lon = p.longitude
+            targetHeading = area.headingDeg
+            if (!area.moving) reportedSpeed = 0f
+        } else if (routeMode && r != null) {
             traveledM += speedMps * dtSec
             val s = r.sampleAt(traveledM)
             lat = s.lat
@@ -298,7 +312,9 @@ class MockLocationService : Service() {
         val jumped = moved > speedMps * dtSec + 5.0
         lastLat = lat
         lastLon = lon
-        val heading = headingSmoother.step(targetHeading, dtSec, snap = jumped).toFloat()
+        // the area walker already turns smoothly, its heading is the direction it actually moved
+        val heading = (if (routeMode && area != null) HeadingSmoother.normalize(targetHeading)
+        else headingSmoother.step(targetHeading, dtSec, snap = jumped)).toFloat()
 
         fun makeLocation(provider: String) = Location(provider).apply {
             latitude = lat
@@ -344,7 +360,9 @@ class MockLocationService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val speed = String.format("%.1f km/h", speedKph) + if (speedRandom) " ±5" else ""
-        val text = if (routeMode) {
+        val text = if (routeMode && areaWalker != null) {
+            "$speed, random walk in area"
+        } else if (routeMode) {
             String.format("%s, route %.0f m", speed, route?.totalM ?: 0.0)
         } else {
             String.format("%s, radius %.0f m", speed, radiusM)
