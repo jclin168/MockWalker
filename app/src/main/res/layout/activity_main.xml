@@ -374,6 +374,14 @@
                     android:paddingStart="4dp"
                     android:text="Random speed ±5 km/h" />
 
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switchGpsDrift"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:checked="true"
+                    android:paddingStart="4dp"
+                    android:text="GPS drift ±2 m on routes" />
+
                 <TextView
                     android:id="@+id/tvStatus"
                     android:layout_width="match_parent"

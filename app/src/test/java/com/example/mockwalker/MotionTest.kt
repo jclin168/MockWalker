@@ -11,7 +11,7 @@ class MotionTest {
 
     @Test
     fun speedJitterStaysWithinFiveKphAndDrifts() {
-        val j = SpeedJitter(random = Random(42))
+        val j = RandomDrift(maxOffset = 5.0, ratePerSec = 0.8, random = Random(42))
         var prev = 0.0
         val seen = mutableListOf<Double>()
         repeat(2000) {
@@ -23,6 +23,24 @@ class MotionTest {
         }
         assertTrue(seen.max() > 3.0)
         assertTrue(seen.min() < -3.0)
+    }
+
+    @Test
+    fun gpsDriftStaysWithinTwoMetersAndKeepsMoving() {
+        val d = RandomDrift(maxOffset = 2.0, ratePerSec = 0.4, minHoldSec = 2.0, maxHoldSec = 6.0, random = Random(5))
+        var prev = 0.0
+        var left = 0
+        var right = 0
+        repeat(3600) {
+            val o = d.step(1.0)
+            assertTrue("offset $o", abs(o) <= 2.0)
+            assertTrue("step ${o - prev}", abs(o - prev) <= 0.4 + 1e-9)
+            if (o < -1.0) left++
+            if (o > 1.0) right++
+            prev = o
+        }
+        // spends real time on both sides of the line, 1-2 m out
+        assertTrue("left $left right $right", left > 300 && right > 300)
     }
 
     @Test

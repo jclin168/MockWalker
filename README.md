@@ -37,6 +37,9 @@ Android app that mocks GPS location while "walking" on an OpenStreetMap map (osm
 - Random speed ±5 km/h (on by default) lets the pace drift up to 5 km/h above or below the
   chosen speed (never below 1 km/h). A new target pace is picked every 4 to 12 seconds and
   approached gradually; the live speed is shown next to the speed setting while walking
+- GPS drift ±2 m on routes (on by default) imitates real GPS noise: the position wanders
+  sideways, perpendicular to the direction of travel, picking a new offset every 2 to 6 seconds
+  and sliding to it at up to 0.4 m/s. It never strays more than 2 m from the route line
 - The reported bearing follows the direction of travel: on a route it looks a few meters ahead
   so it turns into corners smoothly, on a circle it is the tangent. The red walker arrow on the
   map points the same way

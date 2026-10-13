@@ -344,6 +344,7 @@ class MainActivity : AppCompatActivity() {
     private fun radiusM() = b.sliderRadius.value.toDouble()
     private fun speedKph() = b.sliderSpeed.value.toDouble()
     private fun speedRandom() = b.switchRandomSpeed.isChecked
+    private fun gpsDrift() = b.switchGpsDrift.isChecked
 
     private fun setupControls() {
         b.modeGroup.check(R.id.btnModeCircle)
@@ -367,6 +368,7 @@ class MainActivity : AppCompatActivity() {
         b.sliderRadius.addOnChangeListener { _, _, _ -> onParamsChanged() }
         b.sliderSpeed.addOnChangeListener { _, _, _ -> onParamsChanged() }
         b.switchRandomSpeed.setOnCheckedChangeListener { _, _ -> onParamsChanged() }
+        b.switchGpsDrift.setOnCheckedChangeListener { _, _ -> onParamsChanged() }
 
         b.btnStart.setOnClickListener { if (running) stopMock() else startMock() }
         b.btnSearch.setOnClickListener { doSearch() }
@@ -430,6 +432,7 @@ class MainActivity : AppCompatActivity() {
                 .setAction(MockLocationService.ACTION_UPDATE)
                 .putExtra(MockLocationService.EXTRA_SPEED_KPH, v)
                 .putExtra(MockLocationService.EXTRA_SPEED_RANDOM, speedRandom())
+                .putExtra(MockLocationService.EXTRA_GPS_DRIFT, gpsDrift())
             // radius edits the running circle only while the draft is still that circle
             val w = activeWalk
             if (w is ActiveWalk.Circle && center == w.center) {
@@ -514,6 +517,7 @@ class MainActivity : AppCompatActivity() {
             .setAction(MockLocationService.ACTION_START)
             .putExtra(MockLocationService.EXTRA_SPEED_KPH, speedKph())
             .putExtra(MockLocationService.EXTRA_SPEED_RANDOM, speedRandom())
+            .putExtra(MockLocationService.EXTRA_GPS_DRIFT, gpsDrift())
 
         when (mode) {
             Mode.CIRCLE -> {
