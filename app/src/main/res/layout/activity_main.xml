@@ -118,6 +118,14 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:text="Route" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnModeLandmark"
+                        style="?attr/materialButtonOutlinedStyle"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Landmark" />
                 </com.google.android.material.button.MaterialButtonToggleGroup>
 
                 <!-- circle-only controls -->
@@ -191,6 +199,9 @@
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
+                            android:minWidth="0dp"
+                            android:paddingStart="4dp"
+                            android:paddingEnd="4dp"
                             android:text="Once" />
 
                         <com.google.android.material.button.MaterialButton
@@ -199,6 +210,9 @@
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
+                            android:minWidth="0dp"
+                            android:paddingStart="4dp"
+                            android:paddingEnd="4dp"
                             android:text="Back &amp; forth" />
 
                         <com.google.android.material.button.MaterialButton
@@ -207,7 +221,21 @@
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
+                            android:minWidth="0dp"
+                            android:paddingStart="4dp"
+                            android:paddingEnd="4dp"
                             android:text="Loop" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnEndRandom"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:minWidth="0dp"
+                            android:paddingStart="4dp"
+                            android:paddingEnd="4dp"
+                            android:text="Random" />
                     </com.google.android.material.button.MaterialButtonToggleGroup>
 
                     <LinearLayout
@@ -259,6 +287,66 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="Shapes &amp; text" />
+
+                    <!-- move, cut/paste and rotate the drawn path as a whole -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <Button
+                            android:id="@+id/btnMovePath"
+                            style="@style/Widget.Material3.Button.TextButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:minWidth="0dp"
+                            android:text="Move" />
+
+                        <Button
+                            android:id="@+id/btnCutPath"
+                            style="@style/Widget.Material3.Button.TextButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:minWidth="0dp"
+                            android:text="Cut" />
+
+                        <Button
+                            android:id="@+id/btnPastePath"
+                            style="@style/Widget.Material3.Button.TextButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:minWidth="0dp"
+                            android:text="Paste" />
+
+                        <Button
+                            android:id="@+id/btnRotatePath"
+                            style="@style/Widget.Material3.Button.TextButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:minWidth="0dp"
+                            android:text="Rotate" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- landmark-only controls -->
+                <LinearLayout
+                    android:id="@+id/landmarkGroup"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <Button
+                        android:id="@+id/btnLandmarks"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="Landmarks" />
                 </LinearLayout>
 
                 <TextView
@@ -277,6 +365,14 @@
                     android:value="5"
                     android:valueFrom="1"
                     android:valueTo="30" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switchRandomSpeed"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:checked="true"
+                    android:paddingStart="4dp"
+                    android:text="Random speed ±5 km/h" />
 
                 <TextView
                     android:id="@+id/tvStatus"

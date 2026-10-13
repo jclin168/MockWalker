@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A simple street map: land, a park, a river and a few roads. 108dp adaptive icon canvas. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- land -->
+    <path android:fillColor="#F1ECE2" android:pathData="M0,0h108v108h-108z" />
+    <!-- park -->
+    <path android:fillColor="#C5E5B8" android:pathData="M62,68h46v40h-46z" />
+    <!-- river -->
+    <path android:fillColor="#AAD3F5" android:pathData="M0,46 C20,46 34,30 42,0 L54,0 C46,36 26,58 0,58 Z" />
+    <!-- side streets -->
+    <path
+        android:pathData="M0,34h108 M30,0v108 M80,0v108 M0,82h108"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="5" />
+    <!-- main road -->
+    <path
+        android:pathData="M-4,104 L108,40"
+        android:strokeColor="#E8B84A"
+        android:strokeWidth="9" />
+    <path
+        android:pathData="M-4,104 L108,40"
+        android:strokeColor="#FFD86E"
+        android:strokeWidth="6" />
+</vector>

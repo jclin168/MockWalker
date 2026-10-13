@@ -3,7 +3,8 @@ package com.example.mockwalker
 import org.osmdroid.util.GeoPoint
 import kotlin.math.min
 
-enum class EndMode { ONCE, PING_PONG, LOOP }
+/** RANDOM wanders inside the area the waypoints enclose instead of following the line (see AreaWalker). */
+enum class EndMode { ONCE, PING_PONG, LOOP, RANDOM }
 
 /**
  * A polyline the walker follows. Position is a pure function of distance traveled.
@@ -14,7 +15,7 @@ class RoutePath(points: List<GeoPoint>, val endMode: EndMode, breaks: Set<Int> =
 
     data class Sample(val lat: Double, val lon: Double, val headingDeg: Double, val finished: Boolean)
 
-    private val closes = endMode == EndMode.LOOP && points.size >= 2
+    private val closes = (endMode == EndMode.LOOP || endMode == EndMode.RANDOM) && points.size >= 2
 
     /** Nodes actually walked (LOOP adds the closing leg back to the first point). */
     val nodes: List<GeoPoint> = if (closes) points + points.first() else points
@@ -63,7 +64,7 @@ class RoutePath(points: List<GeoPoint>, val endMode: EndMode, breaks: Set<Int> =
                 if (traveled >= totalM) finished = true
                 min(traveled, totalM)
             }
-            EndMode.LOOP -> traveled % totalM
+            EndMode.LOOP, EndMode.RANDOM -> traveled % totalM
             EndMode.PING_PONG -> {
                 val m = traveled % (2 * totalM)
                 if (m > totalM) {
@@ -82,5 +83,21 @@ class RoutePath(points: List<GeoPoint>, val endMode: EndMode, breaks: Set<Int> =
         if (reverse) heading += 180.0
         heading = ((heading % 360.0) + 360.0) % 360.0
         return Sample(lat, lon, heading, finished)
+    }
+
+    /**
+     * Direction of travel at [traveled]: the bearing toward the point [lookaheadM] further along,
+     * so the heading starts to turn as a corner approaches. Falls back to the current leg's
+     * bearing at the end of the route or when a pen-up jump lies within the lookahead.
+     */
+    fun headingAt(traveled: Double, lookaheadM: Double): Double {
+        val here = sampleAt(traveled)
+        if (here.finished || lookaheadM <= 0.0) return here.headingDeg
+        val ahead = sampleAt(traveled + lookaheadM)
+        val gap = GeoMath.distance(here.lat, here.lon, ahead.lat, ahead.lon)
+        // walking never covers more than the lookahead in a straight line, a longer gap is a jump
+        if (gap < 0.1 * lookaheadM || gap > lookaheadM + 0.5) return here.headingDeg
+        val deg = Math.toDegrees(GeoMath.bearing(here.lat, here.lon, ahead.lat, ahead.lon))
+        return ((deg % 360.0) + 360.0) % 360.0
     }
 }

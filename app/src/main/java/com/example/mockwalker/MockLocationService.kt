@@ -26,11 +26,21 @@ import com.google.android.gms.location.LocationServices
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.osmdroid.util.GeoPoint
 import kotlin.math.PI
+import kotlin.math.min
+
+/** What the service is walking right now; drawn by the UI separately from the editor. */
+sealed class ActiveWalk {
+    data class Circle(val center: GeoPoint, val radiusM: Double) : ActiveWalk()
+    data class Route(val path: RoutePath) : ActiveWalk()
+}
 
 /** Shared state observed by the UI. */
 object MockState {
     val running = MutableStateFlow(false)
+    val walk = MutableStateFlow<ActiveWalk?>(null)
     val position = MutableStateFlow<GeoPoint?>(null)
+    val headingDeg = MutableStateFlow(0f)
+    val currentSpeedKph = MutableStateFlow(0.0)
     val arrived = MutableStateFlow(false)
     val error = MutableStateFlow<String?>(null)
 }
@@ -39,6 +49,9 @@ object MockState {
  * Pushes a moving position to the system as a mock GPS/network location.
  *  - circle mode: angle += (speed_mps / radius_m) * dt
  *  - route mode : traveled += speed_mps * dt, then position = point on the polyline at that distance
+ *  - random walk: wander inside the area the route encloses, new direction every 5 s (AreaWalker)
+ * With random speed on, speed_mps drifts within +/- 5 km/h of the chosen speed. The reported
+ * bearing follows the direction of travel and turns smoothly at corners.
  */
 class MockLocationService : Service() {
 
@@ -51,6 +64,7 @@ class MockLocationService : Service() {
         const val EXTRA_LON = "lon"
         const val EXTRA_RADIUS_M = "radius_m"
         const val EXTRA_SPEED_KPH = "speed_kph"
+        const val EXTRA_SPEED_RANDOM = "speed_random"
         const val EXTRA_PATH_LATS = "path_lats"
         const val EXTRA_PATH_LONS = "path_lons"
         const val EXTRA_END_MODE = "end_mode"
@@ -59,6 +73,8 @@ class MockLocationService : Service() {
         private const val CHANNEL_ID = "mock_walk"
         private const val NOTIF_ID = 1
         private const val UPDATE_INTERVAL_MS = 1000L
+        private const val MIN_SPEED_KPH = 1.0 // random speed never drops below this
+        private const val HEADING_LOOKAHEAD_M = 3.0
     }
 
     private lateinit var lm: LocationManager
@@ -67,10 +83,16 @@ class MockLocationService : Service() {
 
     private var routeMode = false
     private var route: RoutePath? = null
+    private var areaWalker: AreaWalker? = null // set when the route's end mode is RANDOM
     private var centerLat = 0.0
     private var centerLon = 0.0
     private var radiusM = 30.0
     private var speedKph = 5.0
+    private var speedRandom = false
+    private val speedJitter = SpeedJitter()
+    private val headingSmoother = HeadingSmoother()
+    private var lastLat = Double.NaN
+    private var lastLon = Double.NaN
     private var angleRad = 0.0
     private var traveledM = 0.0
     private var lastTickMs = 0L
@@ -113,15 +135,17 @@ class MockLocationService : Service() {
                     return START_NOT_STICKY
                 }
                 if (!readParams(intent, includeSetup = true)) {
-                    MockState.error.value = "A route needs at least 2 waypoints."
+                    MockState.error.value = "A route needs at least 2 waypoints, a random-walk area at least 3."
                     stopSelf()
                     return START_NOT_STICKY
                 }
                 if (!active) start()
+                publishWalk()
                 updateNotification()
             }
             ACTION_UPDATE -> if (active) {
                 readParams(intent, includeSetup = false)
+                publishWalk()
                 updateNotification()
             } else {
                 stopSelf()
@@ -140,16 +164,30 @@ class MockLocationService : Service() {
                 if (lats == null || lons == null || lats.size < 2 || lats.size != lons.size) return false
                 val end = EndMode.values().getOrElse(intent.getIntExtra(EXTRA_END_MODE, 0)) { EndMode.ONCE }
                 val breaks = intent.getIntArrayExtra(EXTRA_PATH_BREAKS)?.toSet() ?: emptySet()
-                route = RoutePath(lats.indices.map { GeoPoint(lats[it], lons[it]) }, end, breaks)
+                if (end == EndMode.RANDOM && lats.size < 3) return false
+                val pts = lats.indices.map { GeoPoint(lats[it], lons[it]) }
+                route = RoutePath(pts, end, breaks)
+                areaWalker = if (end == EndMode.RANDOM) AreaWalker(pts) else null
             } else {
                 route = null
+                areaWalker = null
                 centerLat = intent.getDoubleExtra(EXTRA_LAT, centerLat)
                 centerLon = intent.getDoubleExtra(EXTRA_LON, centerLon)
             }
         }
         radiusM = intent.getDoubleExtra(EXTRA_RADIUS_M, radiusM).coerceAtLeast(1.0)
         speedKph = intent.getDoubleExtra(EXTRA_SPEED_KPH, speedKph).coerceAtLeast(0.0)
+        speedRandom = intent.getBooleanExtra(EXTRA_SPEED_RANDOM, speedRandom)
         return true
+    }
+
+    private fun publishWalk() {
+        val r = route
+        MockState.walk.value = when {
+            !active -> null
+            routeMode && r != null -> ActiveWalk.Route(r)
+            else -> ActiveWalk.Circle(GeoPoint(centerLat, centerLon), radiusM)
+        }
     }
 
     private fun start() {
@@ -160,6 +198,10 @@ class MockLocationService : Service() {
         active = true
         angleRad = 0.0 // circle starts at the north point
         traveledM = 0.0 // route starts at the first waypoint
+        speedJitter.reset()
+        headingSmoother.reset()
+        lastLat = Double.NaN
+        lastLon = Double.NaN
         lastTickMs = SystemClock.elapsedRealtime()
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "mockwalker:walk").apply {
@@ -226,20 +268,33 @@ class MockLocationService : Service() {
         val now = SystemClock.elapsedRealtime()
         val dtSec = (now - lastTickMs) / 1000.0
         lastTickMs = now
-        val speedMps = speedKph / 3.6
+        // the jitter keeps drifting even when off, so turning it on does not jump the pace
+        val offsetKph = speedJitter.step(dtSec)
+        val kph = if (speedRandom && speedKph > 0.0) {
+            (speedKph + offsetKph).coerceAtLeast(min(MIN_SPEED_KPH, speedKph))
+        } else speedKph
+        val speedMps = kph / 3.6
 
-        var lat: Double
-        var lon: Double
-        var heading: Float
+        val lat: Double
+        val lon: Double
+        val targetHeading: Double
         var reportedSpeed = speedMps.toFloat()
 
         val r = route
-        if (routeMode && r != null) {
+        val area = areaWalker
+        if (routeMode && area != null) {
+            area.step(speedMps * dtSec, dtSec)
+            val p = area.position
+            lat = p.latitude
+            lon = p.longitude
+            targetHeading = area.headingDeg
+            if (!area.moving) reportedSpeed = 0f
+        } else if (routeMode && r != null) {
             traveledM += speedMps * dtSec
             val s = r.sampleAt(traveledM)
             lat = s.lat
             lon = s.lon
-            heading = s.headingDeg.toFloat()
+            targetHeading = r.headingAt(traveledM, HEADING_LOOKAHEAD_M)
             if (s.finished) {
                 reportedSpeed = 0f
                 if (!MockState.arrived.value) MockState.arrived.value = true
@@ -250,8 +305,16 @@ class MockLocationService : Service() {
             lat = la
             lon = lo
             // moving clockwise, heading is tangent to the circle
-            heading = ((Math.toDegrees(angleRad) + 90.0) % 360.0).toFloat()
+            targetHeading = Math.toDegrees(angleRad) + 90.0
         }
+        // a pen-up jump teleports, so face the new direction at once instead of turning
+        val moved = if (lastLat.isNaN()) 0.0 else GeoMath.distance(lastLat, lastLon, lat, lon)
+        val jumped = moved > speedMps * dtSec + 5.0
+        lastLat = lat
+        lastLon = lon
+        // the area walker already turns smoothly, its heading is the direction it actually moved
+        val heading = (if (routeMode && area != null) HeadingSmoother.normalize(targetHeading)
+        else headingSmoother.step(targetHeading, dtSec, snap = jumped)).toFloat()
 
         fun makeLocation(provider: String) = Location(provider).apply {
             latitude = lat
@@ -281,6 +344,8 @@ class MockLocationService : Service() {
             gmsFused?.setMockLocation(makeLocation("fused"))
         } catch (_: SecurityException) {
         }
+        MockState.currentSpeedKph.value = reportedSpeed * 3.6
+        MockState.headingDeg.value = heading
         MockState.position.value = GeoPoint(lat, lon)
     }
 
@@ -294,10 +359,13 @@ class MockLocationService : Service() {
             this, 1, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        val text = if (routeMode) {
-            String.format("%.1f km/h, route %.0f m", speedKph, route?.totalM ?: 0.0)
+        val speed = String.format("%.1f km/h", speedKph) + if (speedRandom) " ±5" else ""
+        val text = if (routeMode && areaWalker != null) {
+            "$speed, random walk in area"
+        } else if (routeMode) {
+            String.format("%s, route %.0f m", speed, route?.totalM ?: 0.0)
         } else {
-            String.format("%.1f km/h, radius %.0f m", speedKph, radiusM)
+            String.format("%s, radius %.0f m", speed, radiusM)
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
@@ -332,8 +400,10 @@ class MockLocationService : Service() {
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
         MockState.running.value = false
+        MockState.walk.value = null
         MockState.arrived.value = false
         MockState.position.value = null
+        MockState.currentSpeedKph.value = 0.0
         super.onDestroy()
     }
 }
