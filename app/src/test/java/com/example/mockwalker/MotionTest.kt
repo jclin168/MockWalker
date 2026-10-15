@@ -26,21 +26,24 @@ class MotionTest {
     }
 
     @Test
-    fun gpsDriftStaysWithinTwoMetersAndKeepsMoving() {
-        val d = RandomDrift(maxOffset = 2.0, ratePerSec = 0.4, minHoldSec = 2.0, maxHoldSec = 6.0, random = Random(5))
-        var prev = 0.0
-        var left = 0
-        var right = 0
-        repeat(3600) {
-            val o = d.step(1.0)
-            assertTrue("offset $o", abs(o) <= 2.0)
-            assertTrue("step ${o - prev}", abs(o - prev) <= 0.4 + 1e-9)
-            if (o < -1.0) left++
-            if (o > 1.0) right++
-            prev = o
+    fun gpsDriftHoldsAboutFiveSecondsWithinTwoMeters() {
+        val d = RandomDrift(maxOffset = 2.0, ratePerSec = 0.0, minHoldSec = 4.0, maxHoldSec = 6.0, jump = true, random = Random(5))
+        val v = List(3600) { d.step(1.0) }
+        assertTrue(v.all { abs(it) < 2.0 })
+        // lengths of the runs where the offset stays the same, ignoring the cut-off last run
+        val runs = mutableListOf<Int>()
+        var len = 1
+        for (i in 1 until v.size) {
+            if (v[i] == v[i - 1]) len++ else {
+                runs.add(len)
+                len = 1
+            }
         }
-        // spends real time on both sides of the line, 1-2 m out
-        assertTrue("left $left right $right", left > 300 && right > 300)
+        assertTrue("runs ${runs.toSet()}", runs.all { it in 4..6 })
+        assertTrue(runs.size in 600..900)
+        // random amounts, both sides of the line
+        assertTrue(v.toSet().size > 500)
+        assertTrue(v.min() < -1.5 && v.max() > 1.5)
     }
 
     @Test

@@ -485,7 +485,7 @@ class MainActivity : AppCompatActivity() {
                 } else if (endMode() == EndMode.RANDOM) {
                     if (waypoints.size < 3) "Tap the map to outline an area with at least 3 waypoints"
                     else String.format(
-                        Locale.US, "Area %.0f m², random walk, new direction every 5 s",
+                        Locale.US, "Area %.0f m², random walk, new direction about every 5 s",
                         AreaWalker.areaM2(waypoints)
                     )
                 } else if (waypoints.size < 2) {

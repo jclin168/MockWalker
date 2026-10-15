@@ -6,13 +6,15 @@ import kotlin.random.Random
 /**
  * A value that wanders within +/- [maxOffset]. It picks a new random target every
  * [minHoldSec]..[maxHoldSec] seconds and eases toward it at [ratePerSec], so it drifts
- * smoothly instead of jumping every tick. Used for the walking pace and for GPS wander.
+ * smoothly instead of jumping every tick (walking pace). With [jump] it switches to the new
+ * target at once and holds it until the next pick (GPS wander).
  */
 class RandomDrift(
     private val maxOffset: Double,
     private val ratePerSec: Double,
     private val minHoldSec: Double = 4.0,
     private val maxHoldSec: Double = 12.0,
+    private val jump: Boolean = false,
     private val random: Random = Random.Default,
 ) {
     var offset = 0.0
@@ -32,8 +34,12 @@ class RandomDrift(
             target = random.nextDouble(-maxOffset, maxOffset)
             holdSec = random.nextDouble(minHoldSec, maxHoldSec)
         }
-        val maxStep = ratePerSec * dtSec
-        offset += (target - offset).coerceIn(-maxStep, maxStep)
+        if (jump) {
+            offset = target
+        } else {
+            val maxStep = ratePerSec * dtSec
+            offset += (target - offset).coerceIn(-maxStep, maxStep)
+        }
         return offset
     }
 }

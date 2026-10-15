@@ -49,8 +49,9 @@ object MockState {
  * Pushes a moving position to the system as a mock GPS/network location.
  *  - circle mode: angle += (speed_mps / radius_m) * dt
  *  - route mode : traveled += speed_mps * dt, then position = point on the polyline at that distance
- *  - random walk: wander inside the area the route encloses, new direction every 5 s (AreaWalker)
- *  - GPS drift  : on a route, the position wanders up to GPS_DRIFT_MAX_M to either side of the line
+ *  - random walk: wander inside the area the route encloses, new direction about every 5 s (AreaWalker)
+ *  - GPS drift  : on a route, the position sits up to GPS_DRIFT_MAX_M to either side of the line,
+ *                 the offset changes about every 5 s
  * With random speed on, speed_mps drifts within +/- 5 km/h of the chosen speed. The reported
  * bearing follows the direction of travel and turns smoothly at corners.
  */
@@ -94,8 +95,9 @@ class MockLocationService : Service() {
     private var speedRandom = false
     private val speedJitter = RandomDrift(maxOffset = 5.0, ratePerSec = 0.8)
     private var gpsDrift = false
-    // sideways GPS wander, positive = right of the direction of travel; changes every 2-6 s
-    private val lateralDrift = RandomDrift(maxOffset = GPS_DRIFT_MAX_M, ratePerSec = 0.4, minHoldSec = 2.0, maxHoldSec = 6.0)
+    // sideways GPS wander, positive = right of the direction of travel; a new offset about every 5 s
+    private val lateralDrift =
+        RandomDrift(maxOffset = GPS_DRIFT_MAX_M, ratePerSec = 0.0, minHoldSec = 4.0, maxHoldSec = 6.0, jump = true)
     private val headingSmoother = HeadingSmoother()
     private var lastLat = Double.NaN
     private var lastLon = Double.NaN

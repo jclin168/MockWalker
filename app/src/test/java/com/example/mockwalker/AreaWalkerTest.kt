@@ -40,16 +40,22 @@ class AreaWalkerTest {
             GeoPoint(lat, lon)
         }
         val w = AreaWalker(huge, random = Random(3))
-        val headings = mutableListOf<Double>()
-        repeat(60) {
+        val headings = List(600) {
             w.step(1.4, 1.0)
-            headings.add(w.headingDeg)
+            w.headingDeg
         }
-        // heading holds still within each 5 s window once the turn has finished
-        var steadySeconds = 0
-        for (i in 1 until headings.size) if (headings[i] == headings[i - 1]) steadySeconds++
-        assertTrue("steady $steadySeconds", steadySeconds in 20..50)
-        assertTrue(headings.toSet().size >= 10)
+        // the heading is held straight for 4-6 s at a time, then changes in one step
+        val runs = mutableListOf<Int>()
+        var len = 1
+        for (i in 1 until headings.size) {
+            if (headings[i] == headings[i - 1]) len++ else {
+                runs.add(len)
+                len = 1
+            }
+        }
+        runs.removeAt(0) // the first hold started before the first step
+        assertTrue("runs ${runs.toSet()}", runs.all { it in 4..6 })
+        assertTrue(runs.size in 95..150)
     }
 
     @Test
