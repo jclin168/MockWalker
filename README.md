@@ -21,7 +21,7 @@ Android app that mocks GPS location while "walking" on an OpenStreetMap map (osm
 1. Switch to Route and tap the map to add waypoints (green = start)
 2. Choose end behavior: Once (hold at the end), Back & forth, Loop, or Random. Random treats
    the waypoints (at least 3) as the outline of an area and wanders inside it: a new random
-   direction every 5 seconds, turning gradually, and bouncing back in at the edge
+   direction every 4 to 6 seconds (held straight in between), bouncing back in at the edge
 3. Undo removes the last waypoint, Clear removes all
 4. Save stores the route. Routes lists, loads and deletes them
 5. Speed can change live while walking
@@ -37,6 +37,9 @@ Android app that mocks GPS location while "walking" on an OpenStreetMap map (osm
 - Random speed ±5 km/h (on by default) lets the pace drift up to 5 km/h above or below the
   chosen speed (never below 1 km/h). A new target pace is picked every 4 to 12 seconds and
   approached gradually; the live speed is shown next to the speed setting while walking
+- GPS drift ±2 m on routes (on by default) imitates real GPS noise: the position is offset
+  sideways, perpendicular to the direction of travel, by a random amount within 2 m. The offset
+  holds for 4 to 6 seconds, then changes at once to a new one; the position still updates every second
 - The reported bearing follows the direction of travel: on a route it looks a few meters ahead
   so it turns into corners smoothly, on a circle it is the tangent. The red walker arrow on the
   map points the same way

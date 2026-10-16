@@ -49,7 +49,9 @@ object MockState {
  * Pushes a moving position to the system as a mock GPS/network location.
  *  - circle mode: angle += (speed_mps / radius_m) * dt
  *  - route mode : traveled += speed_mps * dt, then position = point on the polyline at that distance
- *  - random walk: wander inside the area the route encloses, new direction every 5 s (AreaWalker)
+ *  - random walk: wander inside the area the route encloses, new direction about every 5 s (AreaWalker)
+ *  - GPS drift  : on a route, the position sits up to GPS_DRIFT_MAX_M to either side of the line,
+ *                 the offset changes about every 5 s
  * With random speed on, speed_mps drifts within +/- 5 km/h of the chosen speed. The reported
  * bearing follows the direction of travel and turns smoothly at corners.
  */
@@ -65,6 +67,7 @@ class MockLocationService : Service() {
         const val EXTRA_RADIUS_M = "radius_m"
         const val EXTRA_SPEED_KPH = "speed_kph"
         const val EXTRA_SPEED_RANDOM = "speed_random"
+        const val EXTRA_GPS_DRIFT = "gps_drift"
         const val EXTRA_PATH_LATS = "path_lats"
         const val EXTRA_PATH_LONS = "path_lons"
         const val EXTRA_END_MODE = "end_mode"
@@ -75,6 +78,7 @@ class MockLocationService : Service() {
         private const val UPDATE_INTERVAL_MS = 1000L
         private const val MIN_SPEED_KPH = 1.0 // random speed never drops below this
         private const val HEADING_LOOKAHEAD_M = 3.0
+        const val GPS_DRIFT_MAX_M = 2.0 // a route walk stays within this distance either side of the line
     }
 
     private lateinit var lm: LocationManager
@@ -89,7 +93,11 @@ class MockLocationService : Service() {
     private var radiusM = 30.0
     private var speedKph = 5.0
     private var speedRandom = false
-    private val speedJitter = SpeedJitter()
+    private val speedJitter = RandomDrift(maxOffset = 5.0, ratePerSec = 0.8)
+    private var gpsDrift = false
+    // sideways GPS wander, positive = right of the direction of travel; a new offset about every 5 s
+    private val lateralDrift =
+        RandomDrift(maxOffset = GPS_DRIFT_MAX_M, ratePerSec = 0.0, minHoldSec = 4.0, maxHoldSec = 6.0, jump = true)
     private val headingSmoother = HeadingSmoother()
     private var lastLat = Double.NaN
     private var lastLon = Double.NaN
@@ -178,6 +186,7 @@ class MockLocationService : Service() {
         radiusM = intent.getDoubleExtra(EXTRA_RADIUS_M, radiusM).coerceAtLeast(1.0)
         speedKph = intent.getDoubleExtra(EXTRA_SPEED_KPH, speedKph).coerceAtLeast(0.0)
         speedRandom = intent.getBooleanExtra(EXTRA_SPEED_RANDOM, speedRandom)
+        gpsDrift = intent.getBooleanExtra(EXTRA_GPS_DRIFT, gpsDrift)
         return true
     }
 
@@ -199,6 +208,7 @@ class MockLocationService : Service() {
         angleRad = 0.0 // circle starts at the north point
         traveledM = 0.0 // route starts at the first waypoint
         speedJitter.reset()
+        lateralDrift.reset()
         headingSmoother.reset()
         lastLat = Double.NaN
         lastLon = Double.NaN
@@ -292,9 +302,17 @@ class MockLocationService : Service() {
         } else if (routeMode && r != null) {
             traveledM += speedMps * dtSec
             val s = r.sampleAt(traveledM)
-            lat = s.lat
-            lon = s.lon
             targetHeading = r.headingAt(traveledM, HEADING_LOOKAHEAD_M)
+            // like real GPS, wander a little to the side of the line but never outside the band
+            val side = lateralDrift.step(dtSec)
+            if (gpsDrift && side != 0.0) {
+                val (la, lo) = GeoMath.destination(s.lat, s.lon, Math.toRadians(targetHeading + 90.0), side)
+                lat = la
+                lon = lo
+            } else {
+                lat = s.lat
+                lon = s.lon
+            }
             if (s.finished) {
                 reportedSpeed = 0f
                 if (!MockState.arrived.value) MockState.arrived.value = true
@@ -360,10 +378,11 @@ class MockLocationService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val speed = String.format("%.1f km/h", speedKph) + if (speedRandom) " ±5" else ""
+        val drift = if (gpsDrift && routeMode && areaWalker == null) ", GPS drift" else ""
         val text = if (routeMode && areaWalker != null) {
             "$speed, random walk in area"
         } else if (routeMode) {
-            String.format("%s, route %.0f m", speed, route?.totalM ?: 0.0)
+            String.format("%s, route %.0f m%s", speed, route?.totalM ?: 0.0, drift)
         } else {
             String.format("%s, radius %.0f m", speed, radiusM)
         }

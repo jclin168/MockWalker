@@ -4,34 +4,43 @@ import kotlin.math.abs
 import kotlin.random.Random
 
 /**
- * Random speed offset within +/- [maxOffsetKph]. It picks a new target every few seconds and
- * eases toward it, so the pace drifts like a person's instead of jumping every tick.
+ * A value that wanders within +/- [maxOffset]. It picks a new random target every
+ * [minHoldSec]..[maxHoldSec] seconds and eases toward it at [ratePerSec], so it drifts
+ * smoothly instead of jumping every tick (walking pace). With [jump] it switches to the new
+ * target at once and holds it until the next pick (GPS wander).
  */
-class SpeedJitter(
-    private val maxOffsetKph: Double = 5.0,
-    private val rateKphPerSec: Double = 0.8,
+class RandomDrift(
+    private val maxOffset: Double,
+    private val ratePerSec: Double,
+    private val minHoldSec: Double = 4.0,
+    private val maxHoldSec: Double = 12.0,
+    private val jump: Boolean = false,
     private val random: Random = Random.Default,
 ) {
-    var offsetKph = 0.0
+    var offset = 0.0
         private set
-    private var targetKph = 0.0
+    private var target = 0.0
     private var holdSec = 0.0
 
     fun reset() {
-        offsetKph = 0.0
-        targetKph = 0.0
+        offset = 0.0
+        target = 0.0
         holdSec = 0.0
     }
 
     fun step(dtSec: Double): Double {
         holdSec -= dtSec
         if (holdSec <= 0.0) {
-            targetKph = random.nextDouble(-maxOffsetKph, maxOffsetKph)
-            holdSec = random.nextDouble(4.0, 12.0)
+            target = random.nextDouble(-maxOffset, maxOffset)
+            holdSec = random.nextDouble(minHoldSec, maxHoldSec)
         }
-        val maxStep = rateKphPerSec * dtSec
-        offsetKph += (targetKph - offsetKph).coerceIn(-maxStep, maxStep)
-        return offsetKph
+        if (jump) {
+            offset = target
+        } else {
+            val maxStep = ratePerSec * dtSec
+            offset += (target - offset).coerceIn(-maxStep, maxStep)
+        }
+        return offset
     }
 }
 

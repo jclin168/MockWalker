@@ -7,13 +7,15 @@ import kotlin.random.Random
 
 /**
  * Random walk inside the polygon formed by [area] (closed back to the first point).
- * A new random direction is chosen every [changeEverySec]; the walker turns toward it
- * gradually, and when the next step would leave the area it picks a direction that stays inside.
+ * The walker holds a straight heading for [minHoldSec]..[maxHoldSec] (about 5 s), then switches
+ * to a new random direction at once; when the next step would leave the area it picks a
+ * direction that stays inside and starts a new hold.
  * Works in local meters (x = east, y = north) around the area's center, fine for walkable sizes.
  */
 class AreaWalker(
     area: List<GeoPoint>,
-    private val changeEverySec: Double = 5.0,
+    private val minHoldSec: Double = 4.0,
+    private val maxHoldSec: Double = 6.0,
     private val random: Random = Random.Default,
 ) {
     private val origin = PathTransform.center(area)
@@ -22,13 +24,11 @@ class AreaWalker(
     private val xs = DoubleArray(area.size) { (area[it].longitude - origin.longitude) * mPerDegLon }
     private val ys = DoubleArray(area.size) { (area[it].latitude - origin.latitude) * mPerDegLat }
 
-    private val smoother = HeadingSmoother()
     private var x = 0.0
     private var y = 0.0
-    private var targetDeg = random.nextDouble(0.0, 360.0)
-    private var sinceChangeSec = 0.0
+    private var holdSec = nextHold()
 
-    var headingDeg = targetDeg
+    var headingDeg = random.nextDouble(0.0, 360.0)
         private set
 
     /** False when the last step could not move (the area is smaller than one step). */
@@ -54,28 +54,26 @@ class AreaWalker(
                 x = xs[0]; y = ys[0]
             }
         }
-        smoother.step(targetDeg, 0.0, snap = true)
     }
 
+    private fun nextHold() = random.nextDouble(minHoldSec, maxHoldSec)
+
     fun step(distM: Double, dtSec: Double) {
-        sinceChangeSec += dtSec
-        if (sinceChangeSec >= changeEverySec) {
-            targetDeg = random.nextDouble(0.0, 360.0)
-            sinceChangeSec = 0.0
+        holdSec -= dtSec
+        if (holdSec <= 0.0) {
+            headingDeg = random.nextDouble(0.0, 360.0)
+            holdSec = nextHold()
         }
-        val h = smoother.step(targetDeg, dtSec)
-        if (tryMove(h, distM)) {
-            headingDeg = h
+        if (tryMove(headingDeg, distM)) {
             moving = true
             return
         }
-        // at the edge: bounce into a random direction that stays inside, the 5 s clock restarts
+        // at the edge: bounce into a random direction that stays inside, and hold it again
         repeat(48) {
             val d = random.nextDouble(0.0, 360.0)
             if (tryMove(d, distM)) {
-                targetDeg = d
-                headingDeg = smoother.step(d, dtSec, snap = true)
-                sinceChangeSec = 0.0
+                headingDeg = d
+                holdSec = nextHold()
                 moving = true
                 return
             }

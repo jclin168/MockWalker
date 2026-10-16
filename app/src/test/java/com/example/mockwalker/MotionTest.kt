@@ -11,7 +11,7 @@ class MotionTest {
 
     @Test
     fun speedJitterStaysWithinFiveKphAndDrifts() {
-        val j = SpeedJitter(random = Random(42))
+        val j = RandomDrift(maxOffset = 5.0, ratePerSec = 0.8, random = Random(42))
         var prev = 0.0
         val seen = mutableListOf<Double>()
         repeat(2000) {
@@ -23,6 +23,27 @@ class MotionTest {
         }
         assertTrue(seen.max() > 3.0)
         assertTrue(seen.min() < -3.0)
+    }
+
+    @Test
+    fun gpsDriftHoldsAboutFiveSecondsWithinTwoMeters() {
+        val d = RandomDrift(maxOffset = 2.0, ratePerSec = 0.0, minHoldSec = 4.0, maxHoldSec = 6.0, jump = true, random = Random(5))
+        val v = List(3600) { d.step(1.0) }
+        assertTrue(v.all { abs(it) < 2.0 })
+        // lengths of the runs where the offset stays the same, ignoring the cut-off last run
+        val runs = mutableListOf<Int>()
+        var len = 1
+        for (i in 1 until v.size) {
+            if (v[i] == v[i - 1]) len++ else {
+                runs.add(len)
+                len = 1
+            }
+        }
+        assertTrue("runs ${runs.toSet()}", runs.all { it in 4..6 })
+        assertTrue(runs.size in 600..900)
+        // random amounts, both sides of the line
+        assertTrue(v.toSet().size > 500)
+        assertTrue(v.min() < -1.5 && v.max() > 1.5)
     }
 
     @Test
