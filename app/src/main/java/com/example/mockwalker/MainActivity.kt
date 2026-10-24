@@ -1013,6 +1013,19 @@ class MainActivity : AppCompatActivity() {
             setSingleLine()
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
         }
+        val pitchLabel = TextView(this).apply { setPadding(0, dp(12), 0, 0) }
+        val etPitch = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setSingleLine()
+        }
+        // the blank-field hint follows the letter height, so it always shows the real default
+        fun updatePitchHint() {
+            val h = etSize.text.toString().toDoubleOrNull()
+            etPitch.hint = if (h != null && h > 0) {
+                String.format(Locale.US, "Blank = %.0f m (default)", ShapeGen.defaultPitchM(h))
+            } else "Blank = default"
+        }
+        etSize.doAfterTextChanged { updatePitchHint() }
         val etRotation = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_SIGNED or
                 InputType.TYPE_NUMBER_FLAG_DECIMAL
@@ -1024,6 +1037,8 @@ class MainActivity : AppCompatActivity() {
             sizeLabel.text = if (isText) "Letter height (m)" else "Radius (m)"
             etSize.setText(if (isText) "40" else "50")
             etText.visibility = if (isText) View.VISIBLE else View.GONE
+            pitchLabel.visibility = etText.visibility
+            etPitch.visibility = etText.visibility
         }
         group.check(group.getChildAt(0).id)
 
@@ -1039,7 +1054,11 @@ class MainActivity : AppCompatActivity() {
             })
             addView(etRotation)
             addView(etText)
+            pitchLabel.text = "Letter pitch (m), start of one letter to the next"
+            addView(pitchLabel)
+            addView(etPitch)
         }
+        updatePitchHint()
         MaterialAlertDialogBuilder(this)
             .setTitle("Shapes & text")
             .setMessage("Centered on the middle of the map. Replaces the current waypoints.")
@@ -1052,20 +1071,29 @@ class MainActivity : AppCompatActivity() {
                     return@setPositiveButton
                 }
                 val rotation = etRotation.text.toString().toDoubleOrNull() ?: 0.0
-                applyShape(shape, size, rotation, etText.text.toString().trim())
+                val pitchText = etPitch.text.toString().trim()
+                val pitch = if (shape == Shape.TEXT && pitchText.isNotEmpty()) {
+                    val p = pitchText.toDoubleOrNull()
+                    if (p == null || p !in 1.0..10000.0) {
+                        toast("Pitch must be between 1 and 10000 m, or blank for the default")
+                        return@setPositiveButton
+                    }
+                    p
+                } else null
+                applyShape(shape, size, rotation, etText.text.toString().trim(), pitch)
             }
             .setNegativeButton("Cancel", null)
             .show()
     }
 
-    private fun applyShape(shape: Shape, sizeM: Double, rotationDeg: Double, text: String) {
+    private fun applyShape(shape: Shape, sizeM: Double, rotationDeg: Double, text: String, pitchM: Double? = null) {
         val c = b.map.mapCenter.let { GeoPoint(it.latitude, it.longitude) }
         val result = when (shape) {
             Shape.SPIRAL -> ShapeGen.spiral(c, sizeM, rotationDeg)
             Shape.TRIANGLE -> ShapeGen.polygon(c, 3, sizeM, rotationDeg)
             Shape.PENTAGON -> ShapeGen.polygon(c, 5, sizeM, rotationDeg)
             Shape.HEXAGON -> ShapeGen.polygon(c, 6, sizeM, rotationDeg)
-            Shape.TEXT -> ShapeGen.text(c, text, sizeM, rotationDeg)
+            Shape.TEXT -> ShapeGen.text(c, text, sizeM, rotationDeg, pitchM)
         }
         val pts = result?.points
         if (pts == null || pts.size < 2) {

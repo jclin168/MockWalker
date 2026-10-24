@@ -25,13 +25,16 @@ Android app that mocks GPS location while "walking" on an OpenStreetMap map (osm
 3. Undo removes the last waypoint, Clear removes all
 4. Save stores the route. Routes lists, loads and deletes them
 5. Speed can change live while walking
-6. Move: tap Move, then tap the map (or a landmark, or search a place / `lat,lon`) to put the
+6. Shapes & text generates a spiral, polygon or text centered on the map. For text, set the
+   letter height and optionally the letter pitch (start of one letter to the start of the next,
+   blank = 0.75 x the height); a space advances one pitch
+7. Move: tap Move, then tap the map (or a landmark, or search a place / `lat,lon`) to put the
    route's center there. Tap Cancel to give up
-7. Cut / Paste: Cut lifts the route off the editor; Paste then places it centered on the next
+8. Cut / Paste: Cut lifts the route off the editor; Paste then places it centered on the next
    tap or search. The clipboard is kept, so the same route can be pasted again elsewhere
-8. Rotate turns the route around its center: drag the slider or type exact degrees
+9. Rotate turns the route around its center: drag the slider or type exact degrees
    (clockwise, negative for counter-clockwise) with a live preview; Cancel restores it
-9. Moved and rotated routes keep their size and shape in meters
+10. Moved and rotated routes keep their size and shape in meters
 
 ## Speed and heading
 - Random speed ±5 km/h (on by default) lets the pace drift up to 5 km/h above or below the
