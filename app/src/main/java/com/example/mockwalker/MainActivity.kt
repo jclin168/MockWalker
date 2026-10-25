@@ -693,7 +693,7 @@ class MainActivity : AppCompatActivity() {
         b.modeGroup.check(R.id.btnModeCircle)
         val gp = GeoPoint(p.lat, p.lon)
         selectCenter(gp) // first, so the new radius does not resize a circle being walked
-        b.sliderRadius.value = p.radiusM.toFloat().coerceIn(1f, 100f)
+        b.sliderRadius.value = p.radiusM.toFloat().coerceIn(1f, 1000f)
         b.map.controller.setZoom(18.0)
         b.map.controller.animateTo(gp)
     }

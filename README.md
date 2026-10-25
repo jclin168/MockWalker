@@ -13,7 +13,7 @@ Android app that mocks GPS location while "walking" on an OpenStreetMap map (osm
 
 ## Circle mode
 1. Tap the map, search a place, or type `lat,lon` to set the center
-2. Radius 1 to 100 m, speed 1 to 30 km/h
+2. Radius 1 m to 1 km, speed 1 to 30 km/h
 3. Start walking. Radius and speed can change live
 4. Save place stores center and radius. Saved places lists, loads and deletes them
 
