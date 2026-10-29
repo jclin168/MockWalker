@@ -367,9 +367,10 @@ class MainActivity : AppCompatActivity() {
                 updateStatus()
             }
         }
-        // last session's values; sliders throw on values off their step grid, so snap first
-        b.sliderSpeed.value = (Math.round(prefs.speedKph * 2) / 2f).coerceIn(b.sliderSpeed.valueFrom, b.sliderSpeed.valueTo)
-        b.sliderRadius.value = Math.round(prefs.radiusM).toFloat().coerceIn(b.sliderRadius.valueFrom, b.sliderRadius.valueTo)
+        // last session's values; snapped onto each slider's grid
+        for ((slider, v) in listOf(b.sliderSpeed to prefs.speedKph, b.sliderRadius to prefs.radiusM)) {
+            slider.value = Prefs.snapToSlider(v, slider.stepSize, slider.valueFrom, slider.valueTo)
+        }
         b.switchRandomSpeed.isChecked = prefs.speedRandom
         b.switchGpsDrift.isChecked = prefs.gpsDrift
 

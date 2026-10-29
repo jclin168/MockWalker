@@ -1,12 +1,14 @@
 package com.example.mockwalker
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.core.content.edit
 
 /** The last-used walking and shape parameters, so a relaunch starts where the user left off. */
-class Prefs(context: Context) {
-    private val sp = context.applicationContext
-        .getSharedPreferences("mockwalker_settings", Context.MODE_PRIVATE)
+class Prefs(private val sp: SharedPreferences) {
+    constructor(context: Context) : this(
+        context.applicationContext.getSharedPreferences("mockwalker_settings", Context.MODE_PRIVATE)
+    )
 
     // ----- main panel -----
 
@@ -23,6 +25,15 @@ class Prefs(context: Context) {
     var rotationDeg by StringPref("rotation_deg", "0")
     var text by StringPref("text", "")
     var pitchM by StringPref("pitch_m", "") // blank = ShapeGen default
+
+    companion object {
+        /** Puts a stored value back on a slider's grid; Slider throws on anything off its step or range. */
+        fun snapToSlider(v: Float, step: Float, from: Float, to: Float): Float {
+            if (v.isNaN()) return from
+            val snapped = from + Math.round((v - from) / step) * step
+            return snapped.coerceIn(from, to)
+        }
+    }
 
     private inner class FloatPref(val key: String, val def: Float) {
         operator fun getValue(thisRef: Any?, p: Any?): Float = sp.getFloat(key, def)
