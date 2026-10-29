@@ -12,6 +12,20 @@ class ShapeGenTest {
         GeoMath.distance(a.latitude, a.longitude, b.latitude, b.longitude)
 
     @Test
+    fun textPitchSetsDistanceBetweenLetterStarts() {
+        // H and I both start at their top-left corner (x = 0) with the text read west to east
+        fun pitchOf(r: ShapeGen.Result) = dist(r.points[0], r.points[6])
+        val auto = ShapeGen.text(center, "HI", 40.0)!!
+        assertEquals(ShapeGen.defaultPitchM(40.0), 30.0, 1e-9)
+        assertEquals(30.0, pitchOf(auto), 0.05)
+        assertEquals(55.0, pitchOf(ShapeGen.text(center, "HI", 40.0, pitchM = 55.0)!!), 0.05)
+        // pitch is measured along the text, so rotation does not change it
+        assertEquals(55.0, pitchOf(ShapeGen.text(center, "HI", 40.0, 33.0, 55.0)!!), 0.05)
+        // a space advances one pitch: H _ I puts I two pitches after H
+        assertEquals(110.0, pitchOf(ShapeGen.text(center, "H I", 40.0, pitchM = 55.0)!!), 0.05)
+    }
+
+    @Test
     fun textLettersAreSeparateStrokes() {
         val r = ShapeGen.text(center, "HI", 40.0)!!
         // H has 6 points, so I starts at index 6

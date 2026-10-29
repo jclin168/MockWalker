@@ -91,7 +91,7 @@ class MockLocationService : Service() {
     private var centerLat = 0.0
     private var centerLon = 0.0
     private var radiusM = 30.0
-    private var speedKph = 5.0
+    private var speedKph = 15.0
     private var speedRandom = false
     private val speedJitter = RandomDrift(maxOffset = 5.0, ratePerSec = 0.8)
     private var gpsDrift = false

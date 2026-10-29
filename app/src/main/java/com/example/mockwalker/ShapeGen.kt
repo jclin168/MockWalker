@@ -37,10 +37,16 @@ object ShapeGen {
      * Writes text with a single-stroke block font, each letter its own stroke: the walker
      * jumps from one letter to the next instead of drawing a joining line.
      * rotationDeg turns the whole text clockwise around its center (0 = reads west to east).
+     * pitchM is the distance from the start of one letter to the start of the next
+     * (default [defaultPitchM]); less than half the letter height makes letters overlap.
      * Returns null if no supported character (A-Z, 0-9) is present.
      */
-    fun text(center: GeoPoint, text: String, letterHeightM: Double, rotationDeg: Double = 0.0): Result? {
+    fun text(
+        center: GeoPoint, text: String, letterHeightM: Double, rotationDeg: Double = 0.0, pitchM: Double? = null,
+    ): Result? {
         val unit = letterHeightM / GLYPH_HEIGHT
+        // pitch = start of one letter to the start of the next; a space advances one pitch too
+        val advance = pitchM?.let { it / unit } ?: (GLYPH_WIDTH + LETTER_GAP)
         val local = mutableListOf<Pair<Double, Double>>()
         val breaks = mutableSetOf<Int>()
         var x = 0.0
@@ -52,7 +58,7 @@ object ShapeGen {
                 glyph.forEach { (gx, gy) -> local.add(Pair(x + gx, gy)) }
                 width = x + GLYPH_WIDTH
             }
-            if (glyph != null || ch == ' ') x += GLYPH_WIDTH + LETTER_GAP
+            if (glyph != null || ch == ' ') x += advance
         }
         if (local.isEmpty()) return null
         // center the text block on the chosen point, then rotate clockwise around it
@@ -75,6 +81,9 @@ object ShapeGen {
     private const val GLYPH_WIDTH = 2.0
     private const val GLYPH_HEIGHT = 4.0
     private const val LETTER_GAP = 1.0
+
+    /** Pitch used when none is given: letter width plus gap, 0.75 x the letter height. */
+    fun defaultPitchM(letterHeightM: Double) = letterHeightM / GLYPH_HEIGHT * (GLYPH_WIDTH + LETTER_GAP)
 
     // Single-stroke glyphs on a 2 x 4 grid (x right, y up). Strokes retrace where needed
     // so each glyph is one unbroken path; most end on the baseline to keep joins tidy.

@@ -84,6 +84,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var b: ActivityMainBinding
     private lateinit var store: Store
+    private lateinit var prefs: Prefs
     private lateinit var circle: Polygon
     private lateinit var polyline: Polyline
     private lateinit var centerMarker: Marker
@@ -141,6 +142,7 @@ class MainActivity : AppCompatActivity() {
         b = ActivityMainBinding.inflate(layoutInflater)
         setContentView(b.root)
         store = Store(this)
+        prefs = Prefs(this)
 
         setupMap()
         setupControls()
@@ -365,6 +367,13 @@ class MainActivity : AppCompatActivity() {
                 updateStatus()
             }
         }
+        // last session's values; snapped onto each slider's grid
+        for ((slider, v) in listOf(b.sliderSpeed to prefs.speedKph, b.sliderRadius to prefs.radiusM)) {
+            slider.value = Prefs.snapToSlider(v, slider.stepSize, slider.valueFrom, slider.valueTo)
+        }
+        b.switchRandomSpeed.isChecked = prefs.speedRandom
+        b.switchGpsDrift.isChecked = prefs.gpsDrift
+
         b.sliderRadius.addOnChangeListener { _, _, _ -> onParamsChanged() }
         b.sliderSpeed.addOnChangeListener { _, _, _ -> onParamsChanged() }
         b.switchRandomSpeed.setOnCheckedChangeListener { _, _ -> onParamsChanged() }
@@ -423,6 +432,10 @@ class MainActivity : AppCompatActivity() {
     private fun onParamsChanged() {
         val r = radiusM()
         val v = speedKph()
+        prefs.radiusM = r.toFloat()
+        prefs.speedKph = v.toFloat()
+        prefs.speedRandom = speedRandom()
+        prefs.gpsDrift = gpsDrift()
         b.tvRadius.text = String.format(Locale.US, "Radius: %.0f m", r)
         renderSpeed()
         redrawCircle()
@@ -693,7 +706,7 @@ class MainActivity : AppCompatActivity() {
         b.modeGroup.check(R.id.btnModeCircle)
         val gp = GeoPoint(p.lat, p.lon)
         selectCenter(gp) // first, so the new radius does not resize a circle being walked
-        b.sliderRadius.value = p.radiusM.toFloat().coerceIn(1f, 100f)
+        b.sliderRadius.value = p.radiusM.toFloat().coerceIn(1f, 1000f)
         b.map.controller.setZoom(18.0)
         b.map.controller.animateTo(gp)
     }
@@ -1013,19 +1026,50 @@ class MainActivity : AppCompatActivity() {
             setSingleLine()
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
         }
+        val pitchLabel = TextView(this).apply { setPadding(0, dp(12), 0, 0) }
+        val etPitch = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setSingleLine()
+        }
+        // the blank-field hint follows the letter height, so it always shows the real default
+        fun updatePitchHint() {
+            val h = etSize.text.toString().toDoubleOrNull()
+            etPitch.hint = if (h != null && h > 0) {
+                String.format(Locale.US, "Blank = %.0f m (default)", ShapeGen.defaultPitchM(h))
+            } else "Blank = default"
+        }
+        etSize.doAfterTextChanged { updatePitchHint() }
         val etRotation = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_SIGNED or
                 InputType.TYPE_NUMBER_FLAG_DECIMAL
             setSingleLine()
-            setText("0")
+            setText(prefs.rotationDeg)
+        }
+        etText.setText(prefs.text)
+        etPitch.setText(prefs.pitchM)
+        // each kind keeps its own last size; switching kinds stashes the one being left
+        var sizeIsText: Boolean? = null
+        fun stashSize() {
+            when (sizeIsText) {
+                true -> prefs.letterHeightM = etSize.text.toString().trim()
+                false -> prefs.shapeRadiusM = etSize.text.toString().trim()
+                null -> {}
+            }
         }
         group.setOnCheckedChangeListener { g, checkedId ->
             val isText = shapes[g.findViewById<View>(checkedId).tag as Int] == Shape.TEXT
-            sizeLabel.text = if (isText) "Letter height (m)" else "Radius (m)"
-            etSize.setText(if (isText) "40" else "50")
+            if (isText != sizeIsText) {
+                stashSize()
+                sizeIsText = isText
+                sizeLabel.text = if (isText) "Letter height (m)" else "Radius (m)"
+                etSize.setText(if (isText) prefs.letterHeightM else prefs.shapeRadiusM)
+            }
             etText.visibility = if (isText) View.VISIBLE else View.GONE
+            pitchLabel.visibility = etText.visibility
+            etPitch.visibility = etText.visibility
         }
-        group.check(group.getChildAt(0).id)
+        val lastShape = shapes.indexOfFirst { it.name == prefs.shape }.coerceAtLeast(0)
+        group.check(group.getChildAt(lastShape).id)
 
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1039,33 +1083,51 @@ class MainActivity : AppCompatActivity() {
             })
             addView(etRotation)
             addView(etText)
+            pitchLabel.text = "Letter pitch (m), start of one letter to the next"
+            addView(pitchLabel)
+            addView(etPitch)
         }
+        updatePitchHint()
         MaterialAlertDialogBuilder(this)
             .setTitle("Shapes & text")
             .setMessage("Centered on the middle of the map. Replaces the current waypoints.")
             .setView(content)
             .setPositiveButton("Create") { _, _ ->
                 val shape = shapes[group.findViewById<View>(group.checkedRadioButtonId).tag as Int]
+                stashSize()
+                prefs.shape = shape.name
+                prefs.rotationDeg = etRotation.text.toString().trim()
+                prefs.text = etText.text.toString().trim()
+                prefs.pitchM = etPitch.text.toString().trim()
                 val size = etSize.text.toString().toDoubleOrNull()
                 if (size == null || size !in 5.0..5000.0) {
                     toast("Size must be between 5 and 5000 m")
                     return@setPositiveButton
                 }
                 val rotation = etRotation.text.toString().toDoubleOrNull() ?: 0.0
-                applyShape(shape, size, rotation, etText.text.toString().trim())
+                val pitchText = etPitch.text.toString().trim()
+                val pitch = if (shape == Shape.TEXT && pitchText.isNotEmpty()) {
+                    val p = pitchText.toDoubleOrNull()
+                    if (p == null || p !in 1.0..10000.0) {
+                        toast("Pitch must be between 1 and 10000 m, or blank for the default")
+                        return@setPositiveButton
+                    }
+                    p
+                } else null
+                applyShape(shape, size, rotation, etText.text.toString().trim(), pitch)
             }
             .setNegativeButton("Cancel", null)
             .show()
     }
 
-    private fun applyShape(shape: Shape, sizeM: Double, rotationDeg: Double, text: String) {
+    private fun applyShape(shape: Shape, sizeM: Double, rotationDeg: Double, text: String, pitchM: Double? = null) {
         val c = b.map.mapCenter.let { GeoPoint(it.latitude, it.longitude) }
         val result = when (shape) {
             Shape.SPIRAL -> ShapeGen.spiral(c, sizeM, rotationDeg)
             Shape.TRIANGLE -> ShapeGen.polygon(c, 3, sizeM, rotationDeg)
             Shape.PENTAGON -> ShapeGen.polygon(c, 5, sizeM, rotationDeg)
             Shape.HEXAGON -> ShapeGen.polygon(c, 6, sizeM, rotationDeg)
-            Shape.TEXT -> ShapeGen.text(c, text, sizeM, rotationDeg)
+            Shape.TEXT -> ShapeGen.text(c, text, sizeM, rotationDeg, pitchM)
         }
         val pts = result?.points
         if (pts == null || pts.size < 2) {
